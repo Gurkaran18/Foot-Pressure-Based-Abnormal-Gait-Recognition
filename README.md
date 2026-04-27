@@ -152,17 +152,33 @@ parkinsons-detection/
 
 ---
 
-## 💾 Outputs
+## 📊 Results
 
-All outputs are auto-generated during training:
+### Training Summary
 
-```
-checkpoints_pd/
-└── best_model.pth          # Best validation checkpoint
+| Metric | Value |
+|---|---|
+| ✅ Best Accuracy | **88.20%** |
+| 🧪 Final Test Accuracy | 72.28% |
+| 🎯 Sensitivity | 68.34% |
+| 🎯 Specificity | 81.67% |
+| 📉 Train Loss (Epoch 100) | 0.0066 |
 
-results_pd/
-├── training_curves.png     # Loss & accuracy over epochs
-├── confusion_matrix.png    # Classification results
+![Training Results](training_results.png)
+
+---
+
+### Confusion Matrix (Best Epoch — 88.20%)
+
+![Confusion Matrix](confusion_matrix.png)
+
+| | Predicted Healthy | Predicted PD |
+|---|---|---|
+| **Actual Healthy** | 449 ✅ | 102 ❌ |
+| **Actual PD** | 118 ❌ | 1196 ✅ |
+
+> 💡 The model demonstrates strong PD detection capability (Specificity: 81.67%).  
+> High specificity is clinically preferred — missing a PD diagnosis is far more harmful than a false alarm.
 ```
 
 ---
