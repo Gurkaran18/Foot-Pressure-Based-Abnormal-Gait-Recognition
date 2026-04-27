@@ -130,25 +130,9 @@ python evaluate.py --checkpoint ./checkpoints_pd/best_model.pth
 
 ```
 parkinsons-detection/
-│
-├── main.py                  # Entry point — training & evaluation
-├── config.py                # Hyperparameters and path configuration
-├── evaluate.py              # Standalone evaluation script
-│
-├── models/
-│   ├── mscaf_gait.py        # Full MSCAF-Gait architecture
-│   ├── attention.py         # Channel & Spatial Attention modules
-│   └── multi_scale_conv.py  # Multi-scale convolution block
-│
-├── dataset/
-│   ├── loader.py            # PhysioNet GRF data loader
-│   └── preprocessing.py     # Normalization + sliding window
-│
-├── checkpoints_pd/          # Saved model weights (auto-created)
-├── results_pd/              # Training curves, confusion matrices (auto-created)
-│
-├── requirements.txt
-└── README.md
+├── main.py         
+├── README.md
+└── requirements.txt
 ```
 
 ---
@@ -179,7 +163,6 @@ checkpoints_pd/
 results_pd/
 ├── training_curves.png     # Loss & accuracy over epochs
 ├── confusion_matrix.png    # Classification results
-└── metrics_summary.json    # Final scores (JSON)
 ```
 
 ---
