@@ -17,6 +17,8 @@ The system simultaneously handles:
 | Severity Regression | UPDRS Score Prediction |
 | Stage Classification | Hoehn & Yahr (H&Y) Stage |
 
+> ⚠️ **Note on UPDRS & H&Y labels:** The PhysioNet dataset includes real UPDRS and H&Y scores in a `demographics.xls` file. `evaluate.py` and `main.py` will parse these automatically when the file is present. If it is absent, synthetic labels are generated as a fallback — in that case, severity regression and H&Y staging results are **not clinically valid**. Binary PD classification always uses real ground-truth labels from the file-naming convention.
+
 ---
 
 ## 🧩 Model Architecture
@@ -98,8 +100,8 @@ CONFIG = {
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/parkinsons-detection.git
-cd parkinsons-detection
+git clone https://github.com/Gurkaran18/Foot-Pressure-Based-Abnormal-Gait-Recognition.git
+cd Foot-Pressure-Based-Abnormal-Gait-Recognition
 ```
 
 ### 2. Install Dependencies
@@ -108,10 +110,13 @@ pip install -r requirements.txt
 ```
 
 ### 3. Download the Dataset
-Download from [PhysioNet](https://physionet.org/content/gaitpdb/1.0.0/) and update the path:
-```python
-# In config.py or main.py
-CONFIG['data_root'] = '/path/to/gait-in-parkinsons-disease'
+Download from [PhysioNet](https://physionet.org/content/gaitpdb/1.0.0/) and set the path:
+```bash
+# Option A — environment variable (recommended)
+export DATA_ROOT=/path/to/gait-in-parkinsons-disease-1.0.0
+
+# Option B — edit main.py directly
+CONFIG['data_root'] = '/path/to/gait-in-parkinsons-disease-1.0.0'
 ```
 
 ### 4. Train the Model
@@ -121,7 +126,9 @@ python main.py
 
 ### 5. Evaluate
 ```bash
-python evaluate.py --checkpoint ./checkpoints_pd/best_model.pth
+python evaluate.py --checkpoint ./checkpoints_pd/best_model_pd.pth \
+                   --data_root  /path/to/gait-in-parkinsons-disease-1.0.0 \
+                   --task       pd_detection
 ```
 
 ---
@@ -129,10 +136,13 @@ python evaluate.py --checkpoint ./checkpoints_pd/best_model.pth
 ## 📁 Project Structure
 
 ```
-parkinsons-detection/
-├── main.py         
+Foot-Pressure-Based-Abnormal-Gait-Recognition/
+├── main.py           ← Model definition, training loop, dataset loader
+├── evaluate.py       ← Standalone evaluation script (metrics, plots)
+├── requirements.txt
 ├── README.md
-└── requirements.txt
+├── confusion_matrix.png
+└── training_results.png
 ```
 
 ---
@@ -164,6 +174,8 @@ parkinsons-detection/
 | 🎯 Specificity | 81.67% |
 | 📉 Train Loss (Epoch 100) | 0.0066 |
 
+> ⚠️ **Train/Test gap (99.66% → 72.28%)**: The model shows signs of overfitting on 100 epochs. Future work will explore stronger regularization and cross-validation to close this gap. Results are obtained with a **subject-level** train/test split to prevent data leakage.
+
 ![Training Results](training_results.png)
 
 ---
@@ -179,7 +191,6 @@ parkinsons-detection/
 
 > 💡 The model demonstrates strong PD detection capability (Specificity: 81.67%).  
 > High specificity is clinically preferred — missing a PD diagnosis is far more harmful than a false alarm.
-```
 
 ---
 
@@ -190,6 +201,7 @@ parkinsons-detection/
 - **Multi-task learning** — jointly optimizes classification and regression for richer representations
 - **Clinical alignment** — outputs map directly to standard PD assessment tools (UPDRS, H&Y)
 - **Sliding window augmentation** — effective data expansion for limited clinical datasets
+- **Subject-level data split** — prevents data leakage across train and test sets
 
 ---
 
@@ -200,6 +212,7 @@ parkinsons-detection/
 - [ ] Wearable/IoT deployment (edge inference)
 - [ ] Generalization across multiple gait datasets
 - [ ] Explainability module (GradCAM for temporal attention visualization)
+- [ ] Cross-validation to better estimate generalization performance
 
 ---
 
@@ -221,11 +234,11 @@ This project is developed for **academic and research purposes**. Dataset usage 
 
 ---
 
-## 👨‍💻 Author
+## 👨‍💻 Authors
 
-**Gurkarnbir Singh**  
+**Gurkaranbir Singh**  
 B.Tech Computer Science & Engineering  
-📧 [your-email@example.com] | 🔗 [LinkedIn] | 💻 [GitHub]
+🔗 [GitHub](https://github.com/Gurkaran18)
 
 ---
 
