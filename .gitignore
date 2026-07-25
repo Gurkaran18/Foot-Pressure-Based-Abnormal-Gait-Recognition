@@ -1,0 +1,51 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ───────────────────────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+
+# ── Jupyter ────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Model checkpoints & large binary files ────────────────────────────────
+checkpoints_pd/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pkl
+
+# ── Dataset files (do NOT commit raw data) ────────────────────────────────
+*.txt.gz
+gait-in-parkinsons-disease*/
+data/
+
+# ── Results / output directories ──────────────────────────────────────────
+results_pd/
+eval_results/
+logs/
+
+# ── OS / IDE ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Environment variables ──────────────────────────────────────────────────
+.env
+.envrc
