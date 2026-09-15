@@ -54,6 +54,13 @@ CONFIG = {
     'in_channels': 16,
     'reduction_ratio': 16,
 
+    # ---- fusion / architecture switches ----
+    'fusion': 'cross',       # 'cross' = paper's cross-attention fusion (Exp VII)
+                             # 'add'   = h + s baseline, for the Table VI ablation
+    'use_lstm': True,        # the paper has no LSTM; set False for the paper topology
+    'attn_dim': 64,          # d_k for the cross-attention q/k projections
+    'spatial_kernel': 1,     # 1 = paper's Conv(1x1); 7 = CBAM-style temporal context
+
     # ==================== TRAINING ====================
     'batch_size': 32,
     'num_epochs': 100,
@@ -63,6 +70,12 @@ CONFIG = {
     # ==================== DATA ====================
     'sequence_length': 1000,  # 10 seconds at 100 Hz
     'stride': 500,            # 50% overlap for data augmentation
+
+    # ---- three-way SUBJECT-LEVEL split ----
+    'test_size': 0.2,            # fraction of SUBJECTS held out for the final test
+    'val_size': 0.2,             # fraction of SUBJECTS used for model selection
+    'early_stop_patience': 15,   # stop after this many epochs with no val gain
+    'min_epochs': 20,            # never stop before this many epochs
     'sampling_rate': 100,     # Hz
 
     # ==================== SYSTEM ====================
@@ -177,29 +190,107 @@ class ChannelAttention1D(nn.Module):
 
 
 class SpatialAttention1D(nn.Module):
-    """Temporal Attention for 1D time series"""
-    def __init__(self):
+    """
+    Temporal ("spatial") attention -- Eqs. (6)-(8) of MSCAF-Gait.
+
+        D_avg = (1/C) * sum_i M_i                      -> (B, 1, W)
+        D_max = max_i M_i                              -> (B, 1, W)
+        D_o   = ReLU[ BN( Conv(Concat(D_avg, D_max)) ) ]  2 -> C channels
+        S     = sigmoid(D_o) (*) M
+
+    The paper expands 2 -> C, so every channel receives its OWN positional
+    gate (Fig. 5). Standard CBAM uses 2 -> 1 and broadcasts a single shared
+    gate across all channels -- strictly less expressive.
+
+    kernel_size=1 reproduces the paper's Conv(1x1), which gives each
+    timestep's gate no temporal context. kernel_size=7 is the CBAM-style
+    variant that lets the gate see a +/-3 neighbourhood.
+    """
+    def __init__(self, channels, kernel_size=1):
         super().__init__()
-        self.conv = nn.Conv1d(2, 1, kernel_size=7, padding=3)
+        self.conv = nn.Conv1d(2, channels, kernel_size=kernel_size,
+                              padding=kernel_size // 2, bias=False)
+        self.bn = nn.BatchNorm1d(channels)
+        self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        out = torch.cat([avg_out, max_out], dim=1)
-        out = self.conv(out)
-        return x * self.sigmoid(out)
+        avg_out = torch.mean(x, dim=1, keepdim=True)          # (B, 1, W)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)        # (B, 1, W)
+        d = torch.cat([avg_out, max_out], dim=1)              # (B, 2, W)
+        d = self.relu(self.bn(self.conv(d)))                  # (B, C, W)
+        return x * self.sigmoid(d)
+
+
+class CrossAttentionFusion(nn.Module):
+    """
+    Cross-attention fusion -- Algorithm 1 and Eq. (9) of MSCAF-Gait.
+
+    Takes the three views M, H, S (each (B, C, W)), permutes them into
+    (B, W, C) token sequences, projects each into queries / keys / values,
+    and computes all SIX ordered cross-domain pairs. No self-attention
+    terms: the information the paper is after lives in the relationships
+    BETWEEN domains.
+
+        O_c1 = Att(q1, k2, v2)    O_c2 = Att(q1, k3, v3)
+        O_c3 = Att(q2, k1, v1)    O_c4 = Att(q2, k3, v3)
+        O_c5 = Att(q3, k1, v1)    O_c6 = Att(q3, k2, v2)
+
+        Att(Q, K, V) = Softmax( Q K^T / sqrt(d_k) ) V
+
+    The six outputs are concatenated along the TEMPORAL axis and permuted
+    back, giving O_f of shape (B, C, 6W).
+    """
+    def __init__(self, channels, attn_dim=64, dropout=0.1):
+        super().__init__()
+        self.scale = attn_dim ** -0.5
+        # One (W_Q, W_K, W_V) triplet per view. Values project back to C so
+        # the concatenated output keeps the channel width the paper specifies.
+        self.q_proj = nn.ModuleList(
+            [nn.Linear(channels, attn_dim, bias=False) for _ in range(3)])
+        self.k_proj = nn.ModuleList(
+            [nn.Linear(channels, attn_dim, bias=False) for _ in range(3)])
+        self.v_proj = nn.ModuleList(
+            [nn.Linear(channels, channels, bias=False) for _ in range(3)])
+        self.attn_drop = nn.Dropout(dropout)
+
+    def _attend(self, q, k, v):
+        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale   # (B, W, W)
+        weights = self.attn_drop(torch.softmax(scores, dim=-1))
+        return torch.matmul(weights, v)                              # (B, W, C)
+
+    def forward(self, m, h, s):
+        views = [t.permute(0, 2, 1) for t in (m, h, s)]              # (B, W, C)
+        q = [p(v) for p, v in zip(self.q_proj, views)]
+        k = [p(v) for p, v in zip(self.k_proj, views)]
+        val = [p(v) for p, v in zip(self.v_proj, views)]
+
+        pairs = [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)]
+        outs = [self._attend(q[i], k[j], val[j]) for i, j in pairs]
+
+        o_c = torch.cat(outs, dim=1)          # (B, 6W, C)
+        return o_c.permute(0, 2, 1)           # (B, C, 6W)
 
 
 class MSCAFGaitPD(nn.Module):
-    """MSCAF-Gait Model for Parkinson's Disease Detection"""
-    def __init__(self, num_classes=2, in_channels=16, task='pd_detection'):
+    """
+    MSCAF-Gait for Parkinson's Disease detection.
+
+    fusion='cross' -> the paper's cross-attention fusion (Exp VII)
+    fusion='add'   -> h + s additive baseline, for the Table VI ablation
+    use_lstm=False -> the paper's own topology (no recurrent layer)
+    """
+    def __init__(self, num_classes=2, in_channels=16, task='pd_detection',
+                 fusion='cross', use_lstm=True, attn_dim=64, spatial_kernel=1):
         super().__init__()
         self.task = task
+        self.fusion = fusion
+        self.use_lstm = use_lstm
 
         self.sfe = ShallowFeatureExtraction1D(in_channels)
         self.multi_scale = MultiScaleConvolution1D(128, 64)
 
+        # pixel-level enhancement -> M
         self.pixel_conv = nn.Sequential(
             nn.Conv1d(256, 128, 1),
             nn.BatchNorm1d(128),
@@ -207,61 +298,71 @@ class MSCAFGaitPD(nn.Module):
         )
 
         self.channel_attention = ChannelAttention1D(128)
-        self.spatial_attention = SpatialAttention1D()
+        self.spatial_attention = SpatialAttention1D(128, kernel_size=spatial_kernel)
 
-        # LSTM for temporal modeling
-        self.lstm = nn.LSTM(128, 128, num_layers=2, batch_first=True, bidirectional=True)
+        if fusion == 'cross':
+            self.cross_attention = CrossAttentionFusion(128, attn_dim=attn_dim)
+        elif fusion != 'add':
+            raise ValueError("fusion must be 'cross' or 'add'")
+
+        # Post-fusion refinement: Conv(1x3) + BN + ReLU + MaxPool  (Fig. 2)
+        self.post_conv = nn.Sequential(
+            nn.Conv1d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(2)
+        )
+
+        if use_lstm:
+            self.lstm = nn.LSTM(128, 128, num_layers=2,
+                                batch_first=True, bidirectional=True)
+            feat_dim = 256
+        else:
+            feat_dim = 128
+        self.feat_dim = feat_dim
 
         # Task-specific heads
-        if task == 'pd_detection':
-            # Binary classification
+        if task in ('pd_detection', 'hy_stage'):
             self.classifier = nn.Sequential(
-                nn.Linear(256, 128),
+                nn.Linear(feat_dim, 128),
                 nn.ReLU(),
                 nn.Dropout(0.5),
                 nn.Linear(128, num_classes)
             )
         elif task == 'severity':
-            # Regression for UPDRS score
             self.regressor = nn.Sequential(
-                nn.Linear(256, 128),
+                nn.Linear(feat_dim, 128),
                 nn.ReLU(),
                 nn.Dropout(0.5),
                 nn.Linear(128, 64),
                 nn.ReLU(),
                 nn.Linear(64, 1)
             )
-        elif task == 'hy_stage':
-            # Multi-class classification for H&Y stages
-            self.classifier = nn.Sequential(
-                nn.Linear(256, 128),
-                nn.ReLU(),
-                nn.Dropout(0.5),
-                nn.Linear(128, num_classes)
-            )
 
     def forward(self, x):
-        # x: (B, C, T) - Batch, Channels (16 sensors), Time
-        f = self.sfe(x)
-        fm = self.multi_scale(f)
-        m = self.pixel_conv(fm)
-        h = self.channel_attention(m)
-        s = self.spatial_attention(m)
+        # x: (B, C_in, T) -- batch, 16 sensors, timesteps
+        f = self.sfe(x)                       # (B, 128, T/8)
+        fm = self.multi_scale(f)              # (B, 256, T/16)
+        m = self.pixel_conv(fm)               # (B, 128, W)   <- M
+        h = self.channel_attention(m)         # (B, 128, W)   <- H
+        s = self.spatial_attention(m)         # (B, 128, W)   <- S
 
-        # Combine features
-        combined = h + s
+        if self.fusion == 'cross':
+            fused = self.cross_attention(m, h, s)   # (B, 128, 6W)  <- O_f
+        else:
+            fused = h + s                            # (B, 128, W)
 
-        # LSTM for temporal modeling
-        combined = combined.permute(0, 2, 1)  # (B, T, C)
-        lstm_out, _ = self.lstm(combined)     # (B, T, 256)
+        fused = self.post_conv(fused)                # (B, 128, L)
 
-        # Global average pooling
-        pooled = torch.mean(lstm_out, dim=1)  # (B, 256)
+        seq = fused.permute(0, 2, 1)                 # (B, L, 128)
+        if self.use_lstm:
+            seq, _ = self.lstm(seq)                  # (B, L, 256)
 
-        # Task-specific output
-        if self.task == 'pd_detection' or self.task == 'hy_stage':
+        pooled = torch.mean(seq, dim=1)              # (B, feat_dim)
+
+        if self.task in ('pd_detection', 'hy_stage'):
             output = self.classifier(pooled)
-        elif self.task == 'severity':
+        else:
             output = self.regressor(pooled).squeeze()
 
         return output, pooled
@@ -524,6 +625,53 @@ def evaluate(model, test_loader, device, task='pd_detection'):
         return acc * 100, report, cm, torch.cat(all_features)
 
 
+
+def collect_predictions(model, loader, device, task='pd_detection'):
+    """
+    Return (preds, labels) as numpy arrays, in dataset order.
+    Requires the loader to have been built with shuffle=False.
+    """
+    model.eval()
+    preds, labels = [], []
+    with torch.no_grad():
+        for data, y in loader:
+            out, _ = model(data.to(device))
+            if task == 'severity':
+                preds.extend(np.atleast_1d(out.cpu().numpy()).tolist())
+            else:
+                preds.extend(out.argmax(1).cpu().numpy().tolist())
+            labels.extend(y.numpy().tolist())
+    return np.array(preds), np.array(labels)
+
+
+def aggregate_by_subject(dataset, preds, labels, task='pd_detection'):
+    """
+    Collapse window-level predictions into ONE prediction per subject.
+
+    A clinician diagnoses a person, not a 10-second window, so this is the
+    clinically meaningful metric. Classification uses a majority vote across
+    that subject's windows; regression uses the mean.
+
+    Relies on `preds` lining up with dataset.sequences, i.e. the loader must
+    have shuffle=False.
+    """
+    from collections import defaultdict
+    bucket, truth = defaultdict(list), {}
+    for i, seq in enumerate(dataset.sequences):
+        sid = seq['subject_id']
+        bucket[sid].append(preds[i])
+        truth[sid] = labels[i]
+
+    y_true, y_pred = [], []
+    for sid, plist in bucket.items():
+        y_true.append(truth[sid])
+        if task == 'severity':
+            y_pred.append(float(np.mean(plist)))
+        else:
+            y_pred.append(int(np.bincount(np.array(plist, dtype=int)).argmax()))
+    return np.array(y_true), np.array(y_pred)
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -555,165 +703,234 @@ def main():
     print(f"  PD patients:      {subjects_df[subjects_df['label']==1]['subject_id'].nunique()} subjects")
     print(f"  Healthy controls: {subjects_df[subjects_df['label']==0]['subject_id'].nunique()} subjects")
 
-    # ── Subject-level train / test split ─────────────────────────────────────
-    # IMPORTANT: split on unique subject IDs, not on individual files.
-    # This prevents data leakage where different walking trials of the same
-    # person appear in both train and test sets.
+    # ── Subject-level train / val / test split ───────────────────────
+    # Split on unique subject IDs, never on files or windows: different trials
+    # of the same person must not straddle a split, or the model can recognise
+    # the individual instead of the disease.
+    #
+    # Three-way, so that model selection -- early stopping and checkpointing --
+    # happens on VALIDATION data. The test set is evaluated exactly once, after
+    # training, which is what makes the reported number an unbiased estimate of
+    # generalisation rather than a maximum over epochs.
     unique_subjects = subjects_df[['subject_id', 'label']].drop_duplicates('subject_id')
+    ids   = unique_subjects['subject_id'].values
+    strat = unique_subjects['label'].values
 
-    train_ids, test_ids = train_test_split(
-        unique_subjects['subject_id'].values,
-        test_size=0.3,
+    trainval_ids, test_ids, trainval_strat, _ = train_test_split(
+        ids, strat,
+        test_size=CONFIG['test_size'],
         random_state=CONFIG['seed'],
-        stratify=unique_subjects['label'].values   # preserve PD / Healthy ratio
+        stratify=strat
+    )
+    val_fraction = CONFIG['val_size'] / (1.0 - CONFIG['test_size'])
+    train_ids, val_ids = train_test_split(
+        trainval_ids,
+        test_size=val_fraction,
+        random_state=CONFIG['seed'],
+        stratify=trainval_strat
     )
 
     train_df = subjects_df[subjects_df['subject_id'].isin(train_ids)]
+    val_df   = subjects_df[subjects_df['subject_id'].isin(val_ids)]
     test_df  = subjects_df[subjects_df['subject_id'].isin(test_ids)]
 
-    print(f"\nTrain: {train_df['subject_id'].nunique()} subjects  ({len(train_df)} files)")
-    print(f"Test:  {test_df['subject_id'].nunique()} subjects  ({len(test_df)} files)")
+    assert not (set(train_ids) & set(val_ids)),  "train/val subject overlap"
+    assert not (set(train_ids) & set(test_ids)), "train/test subject overlap"
+    assert not (set(val_ids)   & set(test_ids)), "val/test subject overlap"
 
-    # ── Create datasets ───────────────────────────────────────────────────────
-    train_dataset = PhysioNetGaitDataset(
-        CONFIG['data_root'], train_df,
-        CONFIG['sequence_length'], CONFIG['stride'], CONFIG['task']
-    )
-    test_dataset = PhysioNetGaitDataset(
-        CONFIG['data_root'], test_df,
-        CONFIG['sequence_length'], CONFIG['stride'], CONFIG['task']
-    )
+    print(f"\nTrain: {len(train_ids):3d} subjects  ({len(train_df)} files)")
+    print(f"Val:   {len(val_ids):3d} subjects  ({len(val_df)} files)")
+    print(f"Test:  {len(test_ids):3d} subjects  ({len(test_df)} files)")
+    print("  verified: no subject appears in more than one split")
+
+    # ── Datasets ──────────────────────────────────────────────
+    def build(df):
+        return PhysioNetGaitDataset(
+            CONFIG['data_root'], df,
+            CONFIG['sequence_length'], CONFIG['stride'], CONFIG['task']
+        )
+
+    train_dataset, val_dataset, test_dataset = build(train_df), build(val_df), build(test_df)
 
     print(f"\nTrain sequences: {len(train_dataset)}")
+    print(f"Val   sequences: {len(val_dataset)}")
     print(f"Test  sequences: {len(test_dataset)}")
 
-    if len(train_dataset) == 0:
-        print("❌ No training sequences generated!")
+    if len(train_dataset) == 0 or len(val_dataset) == 0 or len(test_dataset) == 0:
+        print("❌ A split produced zero sequences. Check data_root / split sizes.")
         return
 
-    train_loader = DataLoader(
-        train_dataset, batch_size=CONFIG['batch_size'],
-        shuffle=True, num_workers=CONFIG['num_workers']
-    )
-    test_loader = DataLoader(
-        test_dataset, batch_size=CONFIG['batch_size'],
-        shuffle=False, num_workers=CONFIG['num_workers']
-    )
+    train_loader = DataLoader(train_dataset, batch_size=CONFIG['batch_size'],
+                              shuffle=True,  num_workers=CONFIG['num_workers'])
+    # shuffle=False on val/test so predictions line up with dataset.sequences
+    val_loader   = DataLoader(val_dataset,   batch_size=CONFIG['batch_size'],
+                              shuffle=False, num_workers=CONFIG['num_workers'])
+    test_loader  = DataLoader(test_dataset,  batch_size=CONFIG['batch_size'],
+                              shuffle=False, num_workers=CONFIG['num_workers'])
 
-    # ── Build model ───────────────────────────────────────────────────────────
+    # ── Build model ─────────────────────────────────────────
     print("\nBuilding model...")
     if CONFIG['task'] == 'hy_stage':
-        CONFIG['num_classes'] = 5  # H&Y stages 0-4
+        CONFIG['num_classes'] = 5
 
     model = MSCAFGaitPD(
         CONFIG['num_classes'],
         CONFIG['in_channels'],
-        CONFIG['task']
+        CONFIG['task'],
+        fusion=CONFIG['fusion'],
+        use_lstm=CONFIG['use_lstm'],
+        attn_dim=CONFIG['attn_dim'],
+        spatial_kernel=CONFIG['spatial_kernel']
     ).to(CONFIG['device'])
 
+    print(f"Fusion: {CONFIG['fusion']} | LSTM: {CONFIG['use_lstm']}")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # ── Loss, optimizer, scheduler ────────────────────────────────────────────
     criterion = nn.MSELoss() if CONFIG['task'] == 'severity' else nn.CrossEntropyLoss()
-
-    optimizer = optim.Adam(
-        model.parameters(),
-        lr=CONFIG['learning_rate'],
-        weight_decay=CONFIG['weight_decay']
-    )
-
-    # CosineAnnealingLR: smoothly decays the learning rate to near-zero
+    optimizer = optim.Adam(model.parameters(),
+                           lr=CONFIG['learning_rate'],
+                           weight_decay=CONFIG['weight_decay'])
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=CONFIG['num_epochs'], eta_min=1e-6
-    )
+        optimizer, T_max=CONFIG['num_epochs'], eta_min=1e-6)
 
-    # ── Training loop ─────────────────────────────────────────────────────────
+    # ── Training loop ── model selection on VALIDATION only ──────────────
     print("\nStarting training...\n")
-    best_metric = 0 if CONFIG['task'] != 'severity' else float('inf')
-    history = {'train_loss': [], 'train_acc': [], 'test_metric': []}
+    is_reg = CONFIG['task'] == 'severity'
+    best_val = float('inf') if is_reg else 0.0
+    best_epoch, no_improve = 0, 0
+    history = {'train_loss': [], 'train_acc': [], 'val_metric': []}
+    ckpt_path = os.path.join(CONFIG['save_dir'], 'best_model_pd.pth')
 
     for epoch in range(1, CONFIG['num_epochs'] + 1):
         train_loss, train_acc = train_epoch(
             model, train_loader, criterion, optimizer,
-            CONFIG['device'], CONFIG['task']
-        )
+            CONFIG['device'], CONFIG['task'])
 
-        if CONFIG['task'] == 'severity':
-            mae, rmse, r2, features = evaluate(
-                model, test_loader, CONFIG['device'], CONFIG['task']
-            )
-            test_metric = mae
-
+        if is_reg:
+            mae, rmse, r2, _ = evaluate(model, val_loader, CONFIG['device'], CONFIG['task'])
+            val_metric, improved = mae, mae < best_val
             print(f"\nEpoch {epoch}/{CONFIG['num_epochs']}")
             print(f"  Train Loss: {train_loss:.4f}")
-            print(f"  Test MAE: {mae:.2f} | RMSE: {rmse:.2f} | R²: {r2:.3f}")
-
-            if mae < best_metric:
-                best_metric = mae
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'mae': mae, 'rmse': rmse, 'r2': r2
-                }, os.path.join(CONFIG['save_dir'], 'best_model_pd.pth'))
-                print(f"  ✓ New best MAE: {best_metric:.2f}")
+            print(f"  Val MAE: {mae:.2f} | RMSE: {rmse:.2f} | R2: {r2:.3f}")
+            payload = {'mae': mae, 'rmse': rmse, 'r2': r2}
         else:
-            test_acc, report, cm, features = evaluate(
-                model, test_loader, CONFIG['device'], CONFIG['task']
-            )
-            test_metric = test_acc
-
+            val_acc, report, cm, _ = evaluate(model, val_loader, CONFIG['device'], CONFIG['task'])
+            val_metric, improved = val_acc, val_acc > best_val
             print(f"\nEpoch {epoch}/{CONFIG['num_epochs']}")
             print(f"  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
-            print(f"  Test Acc: {test_acc:.2f}%")
+            print(f"  Val Acc: {val_acc:.2f}%")
             if CONFIG['task'] == 'pd_detection':
-                print(f"  Sensitivity: {report['1']['recall']*100:.2f}%")
-                print(f"  Specificity: {report['0']['recall']*100:.2f}%")
+                print(f"  Val Sensitivity: {report['1']['recall']*100:.2f}% | "
+                      f"Val Specificity: {report['0']['recall']*100:.2f}%")
+            payload = {'val_accuracy': val_acc, 'report': report, 'confusion_matrix': cm}
 
-            if test_acc > best_metric:
-                best_metric = test_acc
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'accuracy': test_acc,
-                    'report': report,
-                    'confusion_matrix': cm
-                }, os.path.join(CONFIG['save_dir'], 'best_model_pd.pth'))
-                print(f"  ✓ New best: {best_metric:.2f}%")
+        if improved:
+            best_val, best_epoch, no_improve = val_metric, epoch, 0
+            torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), **payload},
+                       ckpt_path)
+            print(f"  ✓ new best on VALIDATION ({best_val:.2f}) — checkpoint saved")
+        else:
+            no_improve += 1
+            print(f"  no val improvement for {no_improve} epoch(s) "
+                  f"(best {best_val:.2f} @ epoch {best_epoch})")
 
         history['train_loss'].append(train_loss)
         history['train_acc'].append(train_acc)
-        history['test_metric'].append(test_metric)
-
+        history['val_metric'].append(val_metric)
         scheduler.step()
 
-    # ── Save history ──────────────────────────────────────────────────────────
+        if epoch >= CONFIG['min_epochs'] and no_improve >= CONFIG['early_stop_patience']:
+            print(f"\nEarly stopping at epoch {epoch}. "
+                  f"Best validation result was at epoch {best_epoch}.")
+            break
+
+    # ── FINAL TEST ── the test set is used exactly ONCE, here ────────────
+    print("\n" + "=" * 60)
+    print("FINAL EVALUATION ON THE HELD-OUT TEST SET")
+    print(f"Restoring the checkpoint from epoch {best_epoch}, selected on validation.")
+    print("The test set has not influenced training or model selection.")
+    print("=" * 60)
+
+    # weights_only=False: our own checkpoint also stores the confusion matrix
+    # and classification report, which the PyTorch >=2.6 safe loader rejects.
+    ckpt = torch.load(ckpt_path, map_location=CONFIG['device'], weights_only=False)
+    model.load_state_dict(ckpt['model_state_dict'])
+
+    results = {'best_epoch': best_epoch, 'best_val_metric': best_val,
+               'n_train_subjects': int(len(train_ids)),
+               'n_val_subjects': int(len(val_ids)),
+               'n_test_subjects': int(len(test_ids))}
+
+    if is_reg:
+        mae, rmse, r2, _ = evaluate(model, test_loader, CONFIG['device'], CONFIG['task'])
+        print(f"\nWindow-level  MAE: {mae:.2f} | RMSE: {rmse:.2f} | R2: {r2:.3f}")
+        preds, labels = collect_predictions(model, test_loader, CONFIG['device'], CONFIG['task'])
+        yt, yp = aggregate_by_subject(test_dataset, preds, labels, CONFIG['task'])
+        from sklearn.metrics import mean_absolute_error
+        subj_mae = mean_absolute_error(yt, yp)
+        print(f"Subject-level MAE: {subj_mae:.2f}   ({len(yt)} subjects)")
+        results.update({'test_mae': mae, 'test_rmse': rmse, 'test_r2': r2,
+                        'test_subject_mae': float(subj_mae)})
+    else:
+        test_acc, report, cm, _ = evaluate(model, test_loader, CONFIG['device'], CONFIG['task'])
+        print(f"\nWindow-level accuracy: {test_acc:.2f}%   ({len(test_dataset)} windows)")
+        if CONFIG['task'] == 'pd_detection':
+            print(f"  Sensitivity (PD recall)      : {report['1']['recall']*100:.2f}%")
+            print(f"  Specificity (healthy recall) : {report['0']['recall']*100:.2f}%")
+        print("  Confusion matrix (windows):")
+        print(cm)
+
+        preds, labels = collect_predictions(model, test_loader, CONFIG['device'], CONFIG['task'])
+        yt, yp = aggregate_by_subject(test_dataset, preds, labels, CONFIG['task'])
+        subj_acc = accuracy_score(yt, yp) * 100
+        subj_cm = confusion_matrix(yt, yp)
+        print(f"\nSubject-level accuracy: {subj_acc:.2f}%   "
+              f"({len(yt)} subjects, majority vote over their windows)")
+        print("  Confusion matrix (subjects):")
+        print(subj_cm)
+
+        # context: what a constant majority-class predictor would score
+        counts = np.bincount(labels.astype(int))
+        baseline = 100.0 * counts.max() / counts.sum()
+        print(f"\n  For context, always predicting the majority class "
+              f"would score {baseline:.2f}% at window level.")
+
+        results.update({
+            'test_window_accuracy': test_acc,
+            'test_subject_accuracy': float(subj_acc),
+            'majority_baseline': float(baseline),
+            'test_report': report,
+            'test_confusion_matrix': cm.tolist(),
+            'test_subject_confusion_matrix': subj_cm.tolist(),
+        })
+
+    # ── Save history + results ──────────────────────────────────
     with open(os.path.join(CONFIG['results_dir'], 'history_pd.json'), 'w') as f:
         json.dump(history, f, indent=2)
+    with open(os.path.join(CONFIG['results_dir'], 'final_results_pd.json'), 'w') as f:
+        json.dump(results, f, indent=2, default=str)
 
-    # ── Plot results ──────────────────────────────────────────────────────────
+    # ── Plot ─────────────────────────────────────────────────
     plt.figure(figsize=(12, 4))
-
     plt.subplot(1, 2, 1)
     plt.plot(history['train_loss'])
-    plt.title('Training Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
+    plt.title('Training Loss'); plt.xlabel('Epoch'); plt.ylabel('Loss')
 
     plt.subplot(1, 2, 2)
-    plt.plot(history['test_metric'])
-    plt.title('Test Performance')
-    plt.xlabel('Epoch')
-    plt.ylabel('MAE' if CONFIG['task'] == 'severity' else 'Accuracy (%)')
+    if not is_reg:
+        plt.plot(history['train_acc'], label='Train')
+    plt.plot(history['val_metric'], label='Validation')
+    if best_epoch:
+        plt.axvline(best_epoch - 1, ls='--', c='grey', lw=1, label=f'best (epoch {best_epoch})')
+    plt.title('Validation Performance'); plt.xlabel('Epoch')
+    plt.ylabel('MAE' if is_reg else 'Accuracy (%)'); plt.legend()
 
     plt.tight_layout()
-    plt.savefig(os.path.join(CONFIG['results_dir'], 'training_curves_pd.png'))
+    plt.savefig(os.path.join(CONFIG['results_dir'], 'training_curves_pd.png'), dpi=150)
 
     print("\n" + "=" * 60)
-    print("TRAINING COMPLETE!")
-    if CONFIG['task'] == 'severity':
-        print(f"Best MAE: {best_metric:.2f}")
-    else:
-        print(f"Best Accuracy: {best_metric:.2f}%")
+    print("TRAINING COMPLETE")
+    print(f"Best validation {'MAE' if is_reg else 'accuracy'}: {best_val:.2f} (epoch {best_epoch})")
     print(f"Checkpoints: {CONFIG['save_dir']}")
     print(f"Results:     {CONFIG['results_dir']}")
     print("=" * 60)

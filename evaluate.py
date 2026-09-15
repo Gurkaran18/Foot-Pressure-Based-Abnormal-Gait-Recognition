@@ -136,7 +136,7 @@ def main():
         print(f"❌ Checkpoint not found: {args.checkpoint}")
         return
 
-    ckpt = torch.load(args.checkpoint, map_location=device)
+    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     print(f"\nCheckpoint trained to epoch {ckpt.get('epoch', '?')}")
 
     # ── Build model ───────────────────────────────────────────────────────────
@@ -145,6 +145,10 @@ def main():
         num_classes=num_classes,
         in_channels=CONFIG['in_channels'],
         task=args.task,
+        fusion=CONFIG['fusion'],
+        use_lstm=CONFIG['use_lstm'],
+        attn_dim=CONFIG['attn_dim'],
+        spatial_kernel=CONFIG['spatial_kernel'],
     ).to(device)
     model.load_state_dict(ckpt['model_state_dict'])
     model.eval()
