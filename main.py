@@ -24,6 +24,7 @@ import os
 import json
 from tqdm import tqdm
 import random
+import re
 import matplotlib.pyplot as plt
 from pathlib import Path
 import pandas as pd
@@ -494,6 +495,12 @@ def _try_load_demographics(data_path):
     return demo_map
 
 
+# Only files named like a real recording trial are subjects. The dataset root
+# also ships demographics.txt, SHA256SUMS.txt and format.txt, which are not
+# recordings and were previously picked up and mislabelled as PD patients.
+_SUBJECT_FILE_RE = re.compile(r'^(Ga|Ju|Si)(Co|Pt)\d+_\d+\.txt$')
+
+
 def load_subject_info(data_root):
     """
     Load subject information from the PhysioNet gaitpdb dataset.
@@ -511,7 +518,12 @@ def load_subject_info(data_root):
     demo_map = _try_load_demographics(data_path)
 
     if data_path.exists():
-        for subject_file in data_path.glob("*.txt"):
+        for subject_file in sorted(data_path.glob("*.txt")):
+            # Skip non-recording text files (demographics.txt, SHA256SUMS.txt,
+            # format.txt, ...) silently — only trial files are subjects.
+            if not _SUBJECT_FILE_RE.match(subject_file.name):
+                continue
+
             filename  = subject_file.stem          # e.g. 'GaCo01_01'
             subject_id = filename.split('_')[0] if '_' in filename else filename  # e.g. 'GaCo01'
             group      = subject_id[:2]            # 'Ga', 'Ju', or 'Si'
