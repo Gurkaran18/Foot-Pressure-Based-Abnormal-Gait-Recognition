@@ -58,7 +58,7 @@ CONFIG = {
     # ---- fusion / architecture switches ----
     'fusion': 'cross',       # 'cross' = paper's cross-attention fusion (Exp VII)
                              # 'add'   = h + s baseline, for the Table VI ablation
-    'use_lstm': True,        # the paper has no LSTM; set False for the paper topology
+    'use_lstm': False,       # paper topology (no LSTM); set True for the LSTM variant
     'attn_dim': 64,          # d_k for the cross-attention q/k projections
     'spatial_kernel': 1,     # 1 = paper's Conv(1x1); 7 = CBAM-style temporal context
 
