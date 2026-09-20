@@ -685,6 +685,53 @@ def aggregate_by_subject(dataset, preds, labels, task='pd_detection'):
 
 
 # ============================================================================
+# SUBJECT-LEVEL SPLIT
+# ============================================================================
+
+def make_subject_splits(subjects_df, config):
+    """
+    Three-way SUBJECT-LEVEL train / val / test split.
+
+    Split on unique subject IDs, never on files or windows: different trials
+    of the same person must not straddle a split, or the model can recognise
+    the individual instead of the disease.
+
+    Three-way, so that model selection -- early stopping and checkpointing --
+    happens on VALIDATION data. The test set is evaluated exactly once, after
+    training, which is what makes the reported number an unbiased estimate of
+    generalisation rather than a maximum over epochs.
+
+    Deterministic given the same subjects_df and config, so that evaluate.py
+    can reconstruct exactly the same held-out test subjects that training used.
+
+    Returns (train_ids, val_ids, test_ids) as numpy arrays of subject IDs.
+    """
+    unique_subjects = subjects_df[['subject_id', 'label']].drop_duplicates('subject_id')
+    ids   = unique_subjects['subject_id'].values
+    strat = unique_subjects['label'].values
+
+    trainval_ids, test_ids, trainval_strat, _ = train_test_split(
+        ids, strat,
+        test_size=config['test_size'],
+        random_state=config['seed'],
+        stratify=strat
+    )
+    val_fraction = config['val_size'] / (1.0 - config['test_size'])
+    train_ids, val_ids = train_test_split(
+        trainval_ids,
+        test_size=val_fraction,
+        random_state=config['seed'],
+        stratify=trainval_strat
+    )
+
+    assert not (set(train_ids) & set(val_ids)),  "train/val subject overlap"
+    assert not (set(train_ids) & set(test_ids)), "train/test subject overlap"
+    assert not (set(val_ids)   & set(test_ids)), "val/test subject overlap"
+
+    return train_ids, val_ids, test_ids
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -716,39 +763,11 @@ def main():
     print(f"  Healthy controls: {subjects_df[subjects_df['label']==0]['subject_id'].nunique()} subjects")
 
     # ── Subject-level train / val / test split ───────────────────────
-    # Split on unique subject IDs, never on files or windows: different trials
-    # of the same person must not straddle a split, or the model can recognise
-    # the individual instead of the disease.
-    #
-    # Three-way, so that model selection -- early stopping and checkpointing --
-    # happens on VALIDATION data. The test set is evaluated exactly once, after
-    # training, which is what makes the reported number an unbiased estimate of
-    # generalisation rather than a maximum over epochs.
-    unique_subjects = subjects_df[['subject_id', 'label']].drop_duplicates('subject_id')
-    ids   = unique_subjects['subject_id'].values
-    strat = unique_subjects['label'].values
-
-    trainval_ids, test_ids, trainval_strat, _ = train_test_split(
-        ids, strat,
-        test_size=CONFIG['test_size'],
-        random_state=CONFIG['seed'],
-        stratify=strat
-    )
-    val_fraction = CONFIG['val_size'] / (1.0 - CONFIG['test_size'])
-    train_ids, val_ids = train_test_split(
-        trainval_ids,
-        test_size=val_fraction,
-        random_state=CONFIG['seed'],
-        stratify=trainval_strat
-    )
+    train_ids, val_ids, test_ids = make_subject_splits(subjects_df, CONFIG)
 
     train_df = subjects_df[subjects_df['subject_id'].isin(train_ids)]
     val_df   = subjects_df[subjects_df['subject_id'].isin(val_ids)]
     test_df  = subjects_df[subjects_df['subject_id'].isin(test_ids)]
-
-    assert not (set(train_ids) & set(val_ids)),  "train/val subject overlap"
-    assert not (set(train_ids) & set(test_ids)), "train/test subject overlap"
-    assert not (set(val_ids)   & set(test_ids)), "val/test subject overlap"
 
     print(f"\nTrain: {len(train_ids):3d} subjects  ({len(train_df)} files)")
     print(f"Val:   {len(val_ids):3d} subjects  ({len(val_df)} files)")
