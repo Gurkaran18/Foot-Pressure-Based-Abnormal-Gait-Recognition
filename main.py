@@ -29,8 +29,11 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.metrics import (
+    classification_report, confusion_matrix, accuracy_score,
+    balanced_accuracy_score, roc_auc_score,
+)
 
 # ============================================================================
 # CONFIGURATION
@@ -72,11 +75,19 @@ CONFIG = {
     'sequence_length': 1000,  # 10 seconds at 100 Hz
     'stride': 500,            # 50% overlap for data augmentation
 
-    # ---- three-way SUBJECT-LEVEL split ----
+    # ---- three-way SUBJECT-LEVEL split (used when use_cv is False) ----
     'test_size': 0.2,            # fraction of SUBJECTS held out for the final test
     'val_size': 0.2,             # fraction of SUBJECTS used for model selection
     'early_stop_patience': 15,   # stop after this many epochs with no val gain
     'min_epochs': 20,            # never stop before this many epochs
+
+    # ---- SUBJECT-LEVEL cross-validation ----
+    'use_cv': True,              # True = 5-fold CV; False = the old single split
+    'cv_folds': 5,               # number of stratified subject-level folds
+
+    # ---- class imbalance / model selection ----
+    'class_weights': 'inverse_frequency',  # per-fold weights from TRAIN windows only
+    'selection_metric': 'balanced_accuracy',  # val metric for early stop + checkpoint
     'sampling_rate': 100,     # Hz
 
     # ==================== SYSTEM ====================
@@ -637,14 +648,16 @@ def evaluate(model, test_loader, device, task='pd_detection'):
         return acc * 100, report, cm, torch.cat(all_features)
 
 
-
-def collect_predictions(model, loader, device, task='pd_detection'):
+def collect_predictions(model, loader, device, task='pd_detection', return_probs=False):
     """
     Return (preds, labels) as numpy arrays, in dataset order.
+    With return_probs=True, also return the class probabilities (classification
+    only) so ROC-AUC can be computed without a second pass.
+
     Requires the loader to have been built with shuffle=False.
     """
     model.eval()
-    preds, labels = [], []
+    preds, labels, probs = [], [], []
     with torch.no_grad():
         for data, y in loader:
             out, _ = model(data.to(device))
@@ -652,17 +665,25 @@ def collect_predictions(model, loader, device, task='pd_detection'):
                 preds.extend(np.atleast_1d(out.cpu().numpy()).tolist())
             else:
                 preds.extend(out.argmax(1).cpu().numpy().tolist())
+                if return_probs:
+                    probs.extend(torch.softmax(out, dim=1).cpu().numpy().tolist())
             labels.extend(y.numpy().tolist())
+
+    if return_probs:
+        return np.array(preds), np.array(labels), np.array(probs)
     return np.array(preds), np.array(labels)
 
 
-def aggregate_by_subject(dataset, preds, labels, task='pd_detection'):
+def aggregate_by_subject(dataset, preds, labels, task='pd_detection', return_ids=False):
     """
     Collapse window-level predictions into ONE prediction per subject.
 
     A clinician diagnoses a person, not a 10-second window, so this is the
     clinically meaningful metric. Classification uses a majority vote across
     that subject's windows; regression uses the mean.
+
+    With return_ids=True the subject IDs are returned alongside, which is what
+    lets cross-validation pool one out-of-fold prediction per subject.
 
     Relies on `preds` lining up with dataset.sequences, i.e. the loader must
     have shuffle=False.
@@ -674,23 +695,118 @@ def aggregate_by_subject(dataset, preds, labels, task='pd_detection'):
         bucket[sid].append(preds[i])
         truth[sid] = labels[i]
 
-    y_true, y_pred = [], []
+    y_true, y_pred, sids = [], [], []
     for sid, plist in bucket.items():
+        sids.append(sid)
         y_true.append(truth[sid])
         if task == 'severity':
             y_pred.append(float(np.mean(plist)))
         else:
             y_pred.append(int(np.bincount(np.array(plist, dtype=int)).argmax()))
+
+    if return_ids:
+        return np.array(y_true), np.array(y_pred), np.array(sids)
     return np.array(y_true), np.array(y_pred)
 
 
 # ============================================================================
-# SUBJECT-LEVEL SPLIT
+# CLASS IMBALANCE & METRICS
+# ============================================================================
+
+def _window_label(seq, task):
+    """The label a single window contributes, for the given task."""
+    return int(seq['hy_stage']) if task == 'hy_stage' else int(seq['label'])
+
+
+def compute_class_weights(dataset, num_classes, task, device):
+    """
+    Inverse-frequency CrossEntropy weights from the TRAINING windows only.
+
+    Computed per fold, from that fold's training windows and nothing else:
+    deriving weights from the val or test windows would leak information about
+    the held-out subjects into the loss.
+
+    weight_c = N / (num_classes * count_c), so the weights average to 1 and an
+    under-represented class is up-weighted in proportion to how rare it is.
+
+    Returns (weight_tensor, per_class_window_counts).
+    """
+    labels = np.array([_window_label(s, task) for s in dataset.sequences], dtype=int)
+    counts = np.bincount(labels, minlength=num_classes).astype(float)
+    # A class with no training windows in this fold would divide by zero; clamp
+    # it so the run continues (its weight is then meaningless but unused).
+    safe = np.maximum(counts, 1.0)
+    weights = safe.sum() / (num_classes * safe)
+    return torch.tensor(weights, dtype=torch.float32, device=device), counts
+
+
+def classification_metrics(y_true, y_pred, probs=None, num_classes=2):
+    """
+    Accuracy, balanced accuracy, sensitivity, specificity, ROC-AUC (binary),
+    and the confusion matrix — all as plain floats/lists, ready for JSON.
+
+    Balanced accuracy is the mean of the per-class recalls, i.e. the mean of
+    sensitivity and specificity in the binary case. Unlike plain accuracy it
+    cannot be gamed by always predicting the majority class.
+    """
+    labels_arg = list(range(num_classes))
+    cm = confusion_matrix(y_true, y_pred, labels=labels_arg)
+
+    m = {
+        'accuracy': float(accuracy_score(y_true, y_pred) * 100),
+        'balanced_accuracy': float(balanced_accuracy_score(y_true, y_pred) * 100),
+        'confusion_matrix': cm.tolist(),
+        'n': int(len(y_true)),
+    }
+
+    if num_classes == 2:
+        tn, fp, fn, tp = cm.ravel()
+        m['sensitivity'] = float(tp / (tp + fn) * 100) if (tp + fn) else float('nan')
+        m['specificity'] = float(tn / (tn + fp) * 100) if (tn + fp) else float('nan')
+        if probs is not None and len(np.unique(y_true)) == 2:
+            m['roc_auc'] = float(roc_auc_score(y_true, np.asarray(probs)[:, 1]))
+        else:
+            m['roc_auc'] = float('nan')
+
+    counts = np.bincount(np.asarray(y_true, dtype=int), minlength=num_classes)
+    m['majority_baseline'] = float(100.0 * counts.max() / counts.sum())
+    return m
+
+
+def _json_safe(obj):
+    """
+    Replace non-finite floats with None so the output is strict-JSON valid.
+
+    Metrics like ROC-AUC are NaN when a split contains a single class, and
+    json.dump would happily write a bare NaN, which most JSON parsers reject.
+    """
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
+
+
+def _fmt(m, keys):
+    """One-line metric summary for console output."""
+    out = []
+    for k in keys:
+        v = m.get(k)
+        if v is None:
+            continue
+        out.append(f"{k.replace('_', ' ')} {v:.2f}" if k != 'roc_auc' else f"{k} {v:.4f}")
+    return " | ".join(out)
+
+
+# ============================================================================
+# SUBJECT-LEVEL SPLITS
 # ============================================================================
 
 def make_subject_splits(subjects_df, config):
     """
-    Three-way SUBJECT-LEVEL train / val / test split.
+    Three-way SUBJECT-LEVEL train / val / test split (the use_cv=False path).
 
     Split on unique subject IDs, never on files or windows: different trials
     of the same person must not straddle a split, or the model can recognise
@@ -731,129 +847,164 @@ def make_subject_splits(subjects_df, config):
     return train_ids, val_ids, test_ids
 
 
-# ============================================================================
-# MAIN
-# ============================================================================
+def make_cv_folds(subjects_df, config):
+    """
+    K-fold stratified SUBJECT-LEVEL cross-validation splits.
 
-def main():
-    print("=" * 60)
-    print("PART 2: PARKINSON'S DISEASE DETECTION")
-    print("=" * 60)
-    print(f"Device:  {CONFIG['device']}")
-    print(f"Dataset: PhysioNet Gait in PD")
-    print(f"Task:    {CONFIG['task']}")
-    print("=" * 60)
+    StratifiedKFold over unique subject IDs (stratified on the PD/healthy
+    label), so every subject is held out exactly once across the K folds and
+    each fold keeps the class balance of the cohort. Within a fold, a
+    stratified validation set is carved out of the remaining subjects — early
+    stopping never sees the test fold.
 
-    os.makedirs(CONFIG['save_dir'],   exist_ok=True)
-    os.makedirs(CONFIG['results_dir'], exist_ok=True)
+    The validation fraction is expressed relative to the whole cohort, matching
+    make_subject_splits(): config['val_size'] of all subjects.
 
-    # ── Load subject information ──────────────────────────────────────────────
-    print("\nLoading dataset...")
-    subjects_df = load_subject_info(CONFIG['data_root'])
+    Returns a list of K (train_ids, val_ids, test_ids) tuples.
+    """
+    unique_subjects = subjects_df[['subject_id', 'label']].drop_duplicates('subject_id')
+    ids   = unique_subjects['subject_id'].values
+    strat = unique_subjects['label'].values
 
-    if len(subjects_df) == 0:
-        print("❌ No data found! Please check data_root path.")
-        print(f"   Current path: {CONFIG['data_root']}")
-        print("   Set the DATA_ROOT environment variable, e.g.:")
-        print("     export DATA_ROOT=/path/to/gait-in-parkinsons-disease-1.0.0")
-        return
+    k = config['cv_folds']
+    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=config['seed'])
 
-    print(f"Found {len(subjects_df)} files across {subjects_df['subject_id'].nunique()} subjects")
-    print(f"  PD patients:      {subjects_df[subjects_df['label']==1]['subject_id'].nunique()} subjects")
-    print(f"  Healthy controls: {subjects_df[subjects_df['label']==0]['subject_id'].nunique()} subjects")
+    # val_size is a fraction of ALL subjects, but it is carved out of the
+    # (1 - 1/k) that are not in the test fold, so rescale accordingly.
+    val_fraction = config['val_size'] / (1.0 - 1.0 / k)
 
-    # ── Subject-level train / val / test split ───────────────────────
-    train_ids, val_ids, test_ids = make_subject_splits(subjects_df, CONFIG)
+    folds = []
+    for rest_idx, test_idx in skf.split(ids, strat):
+        test_ids   = ids[test_idx]
+        rest_ids   = ids[rest_idx]
+        rest_strat = strat[rest_idx]
 
-    train_df = subjects_df[subjects_df['subject_id'].isin(train_ids)]
-    val_df   = subjects_df[subjects_df['subject_id'].isin(val_ids)]
-    test_df  = subjects_df[subjects_df['subject_id'].isin(test_ids)]
-
-    print(f"\nTrain: {len(train_ids):3d} subjects  ({len(train_df)} files)")
-    print(f"Val:   {len(val_ids):3d} subjects  ({len(val_df)} files)")
-    print(f"Test:  {len(test_ids):3d} subjects  ({len(test_df)} files)")
-    print("  verified: no subject appears in more than one split")
-
-    # ── Datasets ──────────────────────────────────────────────
-    def build(df):
-        return PhysioNetGaitDataset(
-            CONFIG['data_root'], df,
-            CONFIG['sequence_length'], CONFIG['stride'], CONFIG['task']
+        train_ids, val_ids = train_test_split(
+            rest_ids,
+            test_size=val_fraction,
+            random_state=config['seed'],
+            stratify=rest_strat
         )
 
-    train_dataset, val_dataset, test_dataset = build(train_df), build(val_df), build(test_df)
+        assert not (set(train_ids) & set(val_ids)),  "train/val subject overlap"
+        assert not (set(train_ids) & set(test_ids)), "train/test subject overlap"
+        assert not (set(val_ids)   & set(test_ids)), "val/test subject overlap"
 
-    print(f"\nTrain sequences: {len(train_dataset)}")
-    print(f"Val   sequences: {len(val_dataset)}")
-    print(f"Test  sequences: {len(test_dataset)}")
+        folds.append((train_ids, val_ids, test_ids))
 
-    if len(train_dataset) == 0 or len(val_dataset) == 0 or len(test_dataset) == 0:
-        print("❌ A split produced zero sequences. Check data_root / split sizes.")
-        return
+    # Every subject is held out exactly once, and no more than once
+    all_test = np.concatenate([f[2] for f in folds])
+    assert len(all_test) == len(set(all_test)) == len(ids), \
+        "CV test folds must partition the subjects exactly once"
 
-    train_loader = DataLoader(train_dataset, batch_size=CONFIG['batch_size'],
-                              shuffle=True,  num_workers=CONFIG['num_workers'])
-    # shuffle=False on val/test so predictions line up with dataset.sequences
-    val_loader   = DataLoader(val_dataset,   batch_size=CONFIG['batch_size'],
-                              shuffle=False, num_workers=CONFIG['num_workers'])
-    test_loader  = DataLoader(test_dataset,  batch_size=CONFIG['batch_size'],
-                              shuffle=False, num_workers=CONFIG['num_workers'])
+    return folds
 
-    # ── Build model ─────────────────────────────────────────
-    print("\nBuilding model...")
-    if CONFIG['task'] == 'hy_stage':
-        CONFIG['num_classes'] = 5
 
-    model = MSCAFGaitPD(
-        CONFIG['num_classes'],
-        CONFIG['in_channels'],
-        CONFIG['task'],
-        fusion=CONFIG['fusion'],
-        use_lstm=CONFIG['use_lstm'],
-        attn_dim=CONFIG['attn_dim'],
-        spatial_kernel=CONFIG['spatial_kernel']
-    ).to(CONFIG['device'])
+# ============================================================================
+# BUILD / TRAIN / EVALUATE ONE MODEL
+# ============================================================================
 
-    print(f"Fusion: {CONFIG['fusion']} | LSTM: {CONFIG['use_lstm']}")
-    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+def build_datasets(subjects_df, ids_tuple, config):
+    """Build the (train, val, test) datasets for one split of subject IDs."""
+    def build(ids):
+        df = subjects_df[subjects_df['subject_id'].isin(ids)]
+        return PhysioNetGaitDataset(
+            config['data_root'], df,
+            config['sequence_length'], config['stride'], config['task']
+        )
+    return tuple(build(ids) for ids in ids_tuple)
 
-    criterion = nn.MSELoss() if CONFIG['task'] == 'severity' else nn.CrossEntropyLoss()
+
+def build_loaders(train_dataset, val_dataset, test_dataset, config):
+    """shuffle=False on val/test so predictions line up with dataset.sequences."""
+    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'],
+                              shuffle=True,  num_workers=config['num_workers'])
+    val_loader   = DataLoader(val_dataset,   batch_size=config['batch_size'],
+                              shuffle=False, num_workers=config['num_workers'])
+    test_loader  = DataLoader(test_dataset,  batch_size=config['batch_size'],
+                              shuffle=False, num_workers=config['num_workers'])
+    return train_loader, val_loader, test_loader
+
+
+def build_model(config, num_classes):
+    """A fresh, untrained model. Architecture is entirely config-driven."""
+    return MSCAFGaitPD(
+        num_classes,
+        config['in_channels'],
+        config['task'],
+        fusion=config['fusion'],
+        use_lstm=config['use_lstm'],
+        attn_dim=config['attn_dim'],
+        spatial_kernel=config['spatial_kernel']
+    ).to(config['device'])
+
+
+def make_criterion(train_dataset, num_classes, config, verbose=True):
+    """
+    Loss for this fold. Classification uses inverse-frequency class weights
+    computed from this fold's TRAINING windows only.
+    """
+    if config['task'] == 'severity':
+        return nn.MSELoss(), None
+
+    weights, counts = compute_class_weights(
+        train_dataset, num_classes, config['task'], config['device'])
+    if verbose:
+        print(f"  Train window counts per class: {counts.astype(int).tolist()}")
+        print(f"  Inverse-frequency loss weights: "
+              f"{[round(w, 3) for w in weights.cpu().numpy().tolist()]}")
+    return nn.CrossEntropyLoss(weight=weights), weights.cpu().numpy().tolist()
+
+
+def train_model(model, train_loader, val_loader, criterion, config, ckpt_path):
+    """
+    Train with early stopping and checkpointing on VALIDATION data.
+
+    For classification the selection metric is BALANCED accuracy (the mean of
+    sensitivity and specificity). Plain accuracy would let a model that always
+    predicts the majority class look good on an imbalanced validation set and
+    get checkpointed for it.
+
+    Returns (history, best_epoch, best_val).
+    """
+    is_reg = config['task'] == 'severity'
     optimizer = optim.Adam(model.parameters(),
-                           lr=CONFIG['learning_rate'],
-                           weight_decay=CONFIG['weight_decay'])
+                           lr=config['learning_rate'],
+                           weight_decay=config['weight_decay'])
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=CONFIG['num_epochs'], eta_min=1e-6)
+        optimizer, T_max=config['num_epochs'], eta_min=1e-6)
 
-    # ── Training loop ── model selection on VALIDATION only ──────────────
-    print("\nStarting training...\n")
-    is_reg = CONFIG['task'] == 'severity'
-    best_val = float('inf') if is_reg else 0.0
+    best_val = float('inf') if is_reg else -1.0
     best_epoch, no_improve = 0, 0
     history = {'train_loss': [], 'train_acc': [], 'val_metric': []}
-    ckpt_path = os.path.join(CONFIG['save_dir'], 'best_model_pd.pth')
 
-    for epoch in range(1, CONFIG['num_epochs'] + 1):
+    for epoch in range(1, config['num_epochs'] + 1):
         train_loss, train_acc = train_epoch(
             model, train_loader, criterion, optimizer,
-            CONFIG['device'], CONFIG['task'])
+            config['device'], config['task'])
 
+        print(f"\nEpoch {epoch}/{config['num_epochs']}")
         if is_reg:
-            mae, rmse, r2, _ = evaluate(model, val_loader, CONFIG['device'], CONFIG['task'])
+            mae, rmse, r2, _ = evaluate(model, val_loader, config['device'], config['task'])
             val_metric, improved = mae, mae < best_val
-            print(f"\nEpoch {epoch}/{CONFIG['num_epochs']}")
             print(f"  Train Loss: {train_loss:.4f}")
             print(f"  Val MAE: {mae:.2f} | RMSE: {rmse:.2f} | R2: {r2:.3f}")
             payload = {'mae': mae, 'rmse': rmse, 'r2': r2}
         else:
-            val_acc, report, cm, _ = evaluate(model, val_loader, CONFIG['device'], CONFIG['task'])
-            val_metric, improved = val_acc, val_acc > best_val
-            print(f"\nEpoch {epoch}/{CONFIG['num_epochs']}")
+            preds, labels = collect_predictions(
+                model, val_loader, config['device'], config['task'])
+            val_acc = accuracy_score(labels, preds) * 100
+            val_bal = balanced_accuracy_score(labels, preds) * 100
+            val_metric, improved = val_bal, val_bal > best_val
             print(f"  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
-            print(f"  Val Acc: {val_acc:.2f}%")
-            if CONFIG['task'] == 'pd_detection':
-                print(f"  Val Sensitivity: {report['1']['recall']*100:.2f}% | "
-                      f"Val Specificity: {report['0']['recall']*100:.2f}%")
-            payload = {'val_accuracy': val_acc, 'report': report, 'confusion_matrix': cm}
+            print(f"  Val Balanced Acc: {val_bal:.2f}%  (plain acc {val_acc:.2f}%)")
+            if config['num_classes'] == 2 and config['task'] == 'pd_detection':
+                cm = confusion_matrix(labels, preds, labels=[0, 1])
+                tn, fp, fn, tp = cm.ravel()
+                sens = tp / (tp + fn) * 100 if (tp + fn) else float('nan')
+                spec = tn / (tn + fp) * 100 if (tn + fp) else float('nan')
+                print(f"  Val Sensitivity: {sens:.2f}% | Val Specificity: {spec:.2f}%")
+            payload = {'val_balanced_accuracy': val_bal, 'val_accuracy': val_acc}
 
         if improved:
             best_val, best_epoch, no_improve = val_metric, epoch, 0
@@ -870,76 +1021,361 @@ def main():
         history['val_metric'].append(val_metric)
         scheduler.step()
 
-        if epoch >= CONFIG['min_epochs'] and no_improve >= CONFIG['early_stop_patience']:
+        if epoch >= config['min_epochs'] and no_improve >= config['early_stop_patience']:
             print(f"\nEarly stopping at epoch {epoch}. "
                   f"Best validation result was at epoch {best_epoch}.")
             break
 
-    # ── FINAL TEST ── the test set is used exactly ONCE, here ────────────
+    return history, best_epoch, best_val
+
+
+def restore_best(model, ckpt_path, config):
+    """Load the best-validation checkpoint back into the model."""
+    # weights_only=False: our checkpoints also carry metric payloads, which the
+    # PyTorch >=2.6 safe loader rejects.
+    ckpt = torch.load(ckpt_path, map_location=config['device'], weights_only=False)
+    model.load_state_dict(ckpt['model_state_dict'])
+    return ckpt
+
+
+def evaluate_test_split(model, test_dataset, test_loader, config, num_classes):
+    """
+    Score one held-out test split, at window level and subject level.
+
+    Returns a JSON-ready dict plus the per-subject out-of-fold predictions, so
+    the caller can pool them across folds.
+    """
+    preds, labels, probs = collect_predictions(
+        model, test_loader, config['device'], config['task'], return_probs=True)
+
+    window = classification_metrics(labels, preds, probs, num_classes)
+
+    yt, yp, sids = aggregate_by_subject(
+        test_dataset, preds, labels, config['task'], return_ids=True)
+    subject = classification_metrics(yt, yp, None, num_classes)
+
+    return {'window': window, 'subject': subject}, (sids, yt, yp)
+
+
+def print_split_metrics(res, title, binary=True):
+    w, s = res['window'], res['subject']
+    print(f"\n── {title} ─────────────────────────")
+    print(f"  Window level  ({w['n']} windows)")
+    print(f"    Accuracy          : {w['accuracy']:.2f}%")
+    print(f"    Balanced accuracy : {w['balanced_accuracy']:.2f}%")
+    if binary:
+        print(f"    Sensitivity       : {w['sensitivity']:.2f}%")
+        print(f"    Specificity       : {w['specificity']:.2f}%")
+        print(f"    ROC-AUC           : {w['roc_auc']:.4f}")
+    print(f"    Majority baseline : {w['majority_baseline']:.2f}%")
+    print(f"    Confusion matrix  : {w['confusion_matrix']}")
+    print(f"  Subject level ({s['n']} subjects, majority vote)")
+    print(f"    Accuracy          : {s['accuracy']:.2f}%")
+    print(f"    Balanced accuracy : {s['balanced_accuracy']:.2f}%")
+    if binary:
+        print(f"    Sensitivity       : {s['sensitivity']:.2f}%")
+        print(f"    Specificity       : {s['specificity']:.2f}%")
+    print(f"    Majority baseline : {s['majority_baseline']:.2f}%")
+    print(f"    Confusion matrix  : {s['confusion_matrix']}")
+
+
+# ============================================================================
+# RUN CONFIGURATION LOGGING
+# ============================================================================
+
+def log_run_config(config):
+    """Print exactly how this run is set up, so a logged run is reproducible."""
+    print("\n── Run configuration ────────────────────────────")
+    print(f"  Task              : {config['task']}")
+    print(f"  Fusion            : {config['fusion']}")
+    print(f"  use_lstm          : {config['use_lstm']}"
+          f"{'  (paper topology)' if not config['use_lstm'] else '  (LSTM variant)'}")
+    print(f"  attn_dim          : {config['attn_dim']}")
+    print(f"  spatial_kernel    : {config['spatial_kernel']}")
+    if config['task'] == 'severity':
+        print("  Loss              : MSELoss (regression)")
+        print("  Selection metric  : validation MAE (lower is better)")
+    else:
+        print(f"  Loss              : CrossEntropyLoss, class weights = "
+              f"{config['class_weights']} (from TRAIN windows of each fold only)")
+        print(f"  Selection metric  : validation {config['selection_metric']}")
+    if config['use_cv']:
+        eval_desc = f"{config['cv_folds']}-fold stratified subject-level CV"
+    else:
+        eval_desc = "single subject-level train/val/test split"
+    print(f"  Evaluation        : {eval_desc}")
+    print(f"  Early stopping    : patience {config['early_stop_patience']}, "
+          f"min {config['min_epochs']} epochs")
+    print(f"  Epochs (max)      : {config['num_epochs']}")
+    print(f"  Batch size        : {config['batch_size']}")
+    print(f"  Learning rate     : {config['learning_rate']}")
+    print(f"  Seed              : {config['seed']}")
+    print(f"  Device            : {config['device']}")
+    print("─" * 49)
+
+
+# ============================================================================
+# CROSS-VALIDATION
+# ============================================================================
+
+# The metrics summarised as mean ± std across folds
+_CV_WINDOW_KEYS  = ['accuracy', 'balanced_accuracy', 'sensitivity',
+                    'specificity', 'roc_auc', 'majority_baseline']
+_CV_SUBJECT_KEYS = ['accuracy', 'balanced_accuracy', 'sensitivity',
+                    'specificity', 'majority_baseline']
+
+
+def summarise_folds(fold_results):
+    """mean ± std across folds for every reported metric."""
+    summary = {}
+    for level, keys in (('window', _CV_WINDOW_KEYS), ('subject', _CV_SUBJECT_KEYS)):
+        summary[level] = {}
+        for key in keys:
+            vals = np.array([f[level][key] for f in fold_results], dtype=float)
+            summary[level][key] = {
+                'mean':      float(np.nanmean(vals)),
+                'std':       float(np.nanstd(vals)),
+                'per_fold':  [float(v) for v in vals],
+            }
+    return summary
+
+
+def plot_cv_summary(fold_results, summary, save_path, binary=True):
+    """Per-fold bars with the across-fold mean drawn on top."""
+    keys = (['accuracy', 'balanced_accuracy', 'sensitivity', 'specificity']
+            if binary else ['accuracy', 'balanced_accuracy'])
+    n_folds = len(fold_results)
+    x = np.arange(n_folds)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5), sharey=True)
+    for ax, level in zip(axes, ('window', 'subject')):
+        width = 0.8 / len(keys)
+        for i, key in enumerate(keys):
+            vals = [f[level][key] for f in fold_results]
+            ax.bar(x + i * width - 0.4 + width / 2, vals, width,
+                   label=key.replace('_', ' '))
+        bal = summary[level]['balanced_accuracy']
+        ax.axhline(bal['mean'], ls='--', c='grey', lw=1.2,
+                   label=f"mean bal. acc {bal['mean']:.1f}%")
+        ax.axhline(np.mean([f[level]['majority_baseline'] for f in fold_results]),
+                   ls=':', c='red', lw=1.2, label='majority baseline')
+        ax.set_xticks(x)
+        ax.set_xticklabels([f'Fold {i+1}' for i in range(n_folds)])
+        ax.set_title(f'{level.capitalize()}-level metrics per fold')
+        ax.set_ylim(0, 105)
+        ax.grid(axis='y', alpha=0.3)
+    axes[0].set_ylabel('%')
+
+    # One shared legend below the axes, so it never sits on top of the bars
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower center',
+               ncol=len(labels), fontsize=9, frameon=False)
+    fig.suptitle('Stratified subject-level cross-validation')
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved: {save_path}")
+
+
+def run_cross_validation(subjects_df, config, num_classes):
+    """
+    K-fold stratified subject-level cross-validation.
+
+    A fresh model is trained per fold; each fold's test subjects are scored
+    exactly once, after restoring that fold's best-validation checkpoint.
+    """
+    binary = (num_classes == 2)
+    folds = make_cv_folds(subjects_df, config)
+
+    fold_results, fold_meta = [], []
+    oof_sids, oof_true, oof_pred = [], [], []
+
+    for k, (train_ids, val_ids, test_ids) in enumerate(folds, start=1):
+        print("\n" + "=" * 60)
+        print(f"FOLD {k}/{len(folds)}")
+        print("=" * 60)
+
+        train_dataset, val_dataset, test_dataset = build_datasets(
+            subjects_df, (train_ids, val_ids, test_ids), config)
+
+        print(f"  Subjects  train/val/test: "
+              f"{len(train_ids)}/{len(val_ids)}/{len(test_ids)}")
+        print(f"  Windows   train/val/test: "
+              f"{len(train_dataset)}/{len(val_dataset)}/{len(test_dataset)}")
+        print("  verified: no subject appears in more than one split")
+
+        if min(len(train_dataset), len(val_dataset), len(test_dataset)) == 0:
+            print(f"❌ Fold {k} produced an empty split. Check data_root / cv_folds.")
+            return None
+
+        set_seed(config['seed'] + k)          # fresh but reproducible init per fold
+        model = build_model(config, num_classes)
+        criterion, weights = make_criterion(train_dataset, num_classes, config)
+
+        train_loader, val_loader, test_loader = build_loaders(
+            train_dataset, val_dataset, test_dataset, config)
+
+        ckpt_path = os.path.join(config['save_dir'], f'best_model_pd_fold{k}.pth')
+        history, best_epoch, best_val = train_model(
+            model, train_loader, val_loader, criterion, config, ckpt_path)
+
+        # The test fold is touched exactly once, here, with the best-val weights
+        restore_best(model, ckpt_path, config)
+        res, (sids, yt, yp) = evaluate_test_split(
+            model, test_dataset, test_loader, config, num_classes)
+
+        print_split_metrics(res, f"Fold {k} — held-out test subjects", binary)
+
+        fold_results.append(res)
+        fold_meta.append({
+            'fold': k,
+            'n_train_subjects': int(len(train_ids)),
+            'n_val_subjects':   int(len(val_ids)),
+            'n_test_subjects':  int(len(test_ids)),
+            'n_train_windows':  int(len(train_dataset)),
+            'n_val_windows':    int(len(val_dataset)),
+            'n_test_windows':   int(len(test_dataset)),
+            'test_subject_ids': sorted(test_ids.tolist()),
+            'class_weights':    weights,
+            'best_epoch':       int(best_epoch),
+            'best_val_metric':  float(best_val),
+            'epochs_run':       len(history['train_loss']),
+            'history':          history,
+            'window':           res['window'],
+            'subject':          res['subject'],
+        })
+
+        oof_sids.extend(sids.tolist())
+        oof_true.extend(yt.tolist())
+        oof_pred.extend(yp.tolist())
+
+    # ── Across-fold summary ──────────────────────────────────────────────
+    summary = summarise_folds(fold_results)
+
+    # ── Pooled out-of-fold subject-level metrics ─────────────────────────
+    # Every subject was held out exactly once, so pooling gives one prediction
+    # per subject over the whole cohort — a single number on all subjects,
+    # rather than an average of five fold-sized estimates.
+    assert len(oof_sids) == len(set(oof_sids)), "a subject was scored in two folds"
+    pooled = classification_metrics(
+        np.array(oof_true), np.array(oof_pred), None, num_classes)
+
+    print("\n" + "=" * 60)
+    print(f"CROSS-VALIDATION SUMMARY  ({len(folds)} folds)")
+    print("=" * 60)
+    for level, keys in (('window', _CV_WINDOW_KEYS), ('subject', _CV_SUBJECT_KEYS)):
+        print(f"\n  {level.capitalize()}-level, mean ± std across folds:")
+        for key in keys:
+            if not binary and key in ('sensitivity', 'specificity', 'roc_auc'):
+                continue
+            st = summary[level][key]
+            unit = '' if key == 'roc_auc' else '%'
+            fmt = '.4f' if key == 'roc_auc' else '.2f'
+            print(f"    {key.replace('_', ' '):<18}: "
+                  f"{st['mean']:{fmt}}{unit} ± {st['std']:{fmt}}{unit}")
+
+    print(f"\n  Pooled out-of-fold, subject level ({pooled['n']} subjects, "
+          f"one prediction each):")
+    print(f"    accuracy          : {pooled['accuracy']:.2f}%")
+    print(f"    balanced accuracy : {pooled['balanced_accuracy']:.2f}%")
+    if binary:
+        print(f"    sensitivity       : {pooled['sensitivity']:.2f}%")
+        print(f"    specificity       : {pooled['specificity']:.2f}%")
+    print(f"    majority baseline : {pooled['majority_baseline']:.2f}%")
+    print(f"    confusion matrix  : {pooled['confusion_matrix']}")
+
+    # ── Save ─────────────────────────────────────────────────────────────
+    results = {
+        'config': {k: str(v) if not isinstance(v, (int, float, bool, str, type(None))) else v
+                   for k, v in config.items()},
+        'n_folds': len(folds),
+        'n_subjects': int(subjects_df['subject_id'].nunique()),
+        'folds': fold_meta,
+        'summary': summary,
+        'pooled_out_of_fold_subject': pooled,
+        'pooled_out_of_fold_predictions': [
+            {'subject_id': s, 'true': int(t), 'pred': int(p)}
+            for s, t, p in zip(oof_sids, oof_true, oof_pred)
+        ],
+    }
+    out_path = os.path.join(config['results_dir'], 'cv_results.json')
+    with open(out_path, 'w') as f:
+        json.dump(_json_safe(results), f, indent=2, default=str)
+    print(f"\n  Saved: {out_path}")
+
+    plot_cv_summary(fold_results, summary,
+                    os.path.join(config['results_dir'], 'cv_summary.png'), binary)
+
+    return results
+
+
+# ============================================================================
+# SINGLE SPLIT (use_cv = False)
+# ============================================================================
+
+def run_single_split(subjects_df, config, num_classes):
+    """The original single subject-level train/val/test split path."""
+    binary = (num_classes == 2)
+    is_reg = config['task'] == 'severity'
+
+    train_ids, val_ids, test_ids = make_subject_splits(subjects_df, config)
+    train_dataset, val_dataset, test_dataset = build_datasets(
+        subjects_df, (train_ids, val_ids, test_ids), config)
+
+    print(f"\nTrain: {len(train_ids):3d} subjects  ({len(train_dataset)} windows)")
+    print(f"Val:   {len(val_ids):3d} subjects  ({len(val_dataset)} windows)")
+    print(f"Test:  {len(test_ids):3d} subjects  ({len(test_dataset)} windows)")
+    print("  verified: no subject appears in more than one split")
+
+    if min(len(train_dataset), len(val_dataset), len(test_dataset)) == 0:
+        print("❌ A split produced zero sequences. Check data_root / split sizes.")
+        return None
+
+    print("\nBuilding model...")
+    model = build_model(config, num_classes)
+    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    criterion, weights = make_criterion(train_dataset, num_classes, config)
+
+    train_loader, val_loader, test_loader = build_loaders(
+        train_dataset, val_dataset, test_dataset, config)
+
+    print("\nStarting training...\n")
+    ckpt_path = os.path.join(config['save_dir'], 'best_model_pd.pth')
+    history, best_epoch, best_val = train_model(
+        model, train_loader, val_loader, criterion, config, ckpt_path)
+
     print("\n" + "=" * 60)
     print("FINAL EVALUATION ON THE HELD-OUT TEST SET")
-    print(f"Restoring the checkpoint from epoch {best_epoch}, selected on validation.")
     print("The test set has not influenced training or model selection.")
     print("=" * 60)
-
-    # weights_only=False: our own checkpoint also stores the confusion matrix
-    # and classification report, which the PyTorch >=2.6 safe loader rejects.
-    ckpt = torch.load(ckpt_path, map_location=CONFIG['device'], weights_only=False)
-    model.load_state_dict(ckpt['model_state_dict'])
+    restore_best(model, ckpt_path, config)
 
     results = {'best_epoch': best_epoch, 'best_val_metric': best_val,
+               'class_weights': weights,
                'n_train_subjects': int(len(train_ids)),
                'n_val_subjects': int(len(val_ids)),
                'n_test_subjects': int(len(test_ids))}
 
     if is_reg:
-        mae, rmse, r2, _ = evaluate(model, test_loader, CONFIG['device'], CONFIG['task'])
+        mae, rmse, r2, _ = evaluate(model, test_loader, config['device'], config['task'])
         print(f"\nWindow-level  MAE: {mae:.2f} | RMSE: {rmse:.2f} | R2: {r2:.3f}")
-        preds, labels = collect_predictions(model, test_loader, CONFIG['device'], CONFIG['task'])
-        yt, yp = aggregate_by_subject(test_dataset, preds, labels, CONFIG['task'])
+        preds, labels = collect_predictions(model, test_loader, config['device'], config['task'])
+        yt, yp = aggregate_by_subject(test_dataset, preds, labels, config['task'])
         from sklearn.metrics import mean_absolute_error
         subj_mae = mean_absolute_error(yt, yp)
         print(f"Subject-level MAE: {subj_mae:.2f}   ({len(yt)} subjects)")
         results.update({'test_mae': mae, 'test_rmse': rmse, 'test_r2': r2,
                         'test_subject_mae': float(subj_mae)})
     else:
-        test_acc, report, cm, _ = evaluate(model, test_loader, CONFIG['device'], CONFIG['task'])
-        print(f"\nWindow-level accuracy: {test_acc:.2f}%   ({len(test_dataset)} windows)")
-        if CONFIG['task'] == 'pd_detection':
-            print(f"  Sensitivity (PD recall)      : {report['1']['recall']*100:.2f}%")
-            print(f"  Specificity (healthy recall) : {report['0']['recall']*100:.2f}%")
-        print("  Confusion matrix (windows):")
-        print(cm)
+        res, _ = evaluate_test_split(
+            model, test_dataset, test_loader, config, num_classes)
+        print_split_metrics(res, "Held-out test subjects", binary)
+        results.update({'test_window': res['window'], 'test_subject': res['subject']})
 
-        preds, labels = collect_predictions(model, test_loader, CONFIG['device'], CONFIG['task'])
-        yt, yp = aggregate_by_subject(test_dataset, preds, labels, CONFIG['task'])
-        subj_acc = accuracy_score(yt, yp) * 100
-        subj_cm = confusion_matrix(yt, yp)
-        print(f"\nSubject-level accuracy: {subj_acc:.2f}%   "
-              f"({len(yt)} subjects, majority vote over their windows)")
-        print("  Confusion matrix (subjects):")
-        print(subj_cm)
-
-        # context: what a constant majority-class predictor would score
-        counts = np.bincount(labels.astype(int))
-        baseline = 100.0 * counts.max() / counts.sum()
-        print(f"\n  For context, always predicting the majority class "
-              f"would score {baseline:.2f}% at window level.")
-
-        results.update({
-            'test_window_accuracy': test_acc,
-            'test_subject_accuracy': float(subj_acc),
-            'majority_baseline': float(baseline),
-            'test_report': report,
-            'test_confusion_matrix': cm.tolist(),
-            'test_subject_confusion_matrix': subj_cm.tolist(),
-        })
-
-    # ── Save history + results ──────────────────────────────────
-    with open(os.path.join(CONFIG['results_dir'], 'history_pd.json'), 'w') as f:
+    with open(os.path.join(config['results_dir'], 'history_pd.json'), 'w') as f:
         json.dump(history, f, indent=2)
-    with open(os.path.join(CONFIG['results_dir'], 'final_results_pd.json'), 'w') as f:
-        json.dump(results, f, indent=2, default=str)
+    with open(os.path.join(config['results_dir'], 'final_results_pd.json'), 'w') as f:
+        json.dump(_json_safe(results), f, indent=2, default=str)
 
     # ── Plot ─────────────────────────────────────────────────
     plt.figure(figsize=(12, 4))
@@ -949,19 +1385,71 @@ def main():
 
     plt.subplot(1, 2, 2)
     if not is_reg:
-        plt.plot(history['train_acc'], label='Train')
+        plt.plot(history['train_acc'], label='Train accuracy')
     plt.plot(history['val_metric'], label='Validation')
     if best_epoch:
         plt.axvline(best_epoch - 1, ls='--', c='grey', lw=1, label=f'best (epoch {best_epoch})')
     plt.title('Validation Performance'); plt.xlabel('Epoch')
-    plt.ylabel('MAE' if is_reg else 'Accuracy (%)'); plt.legend()
+    plt.ylabel('MAE' if is_reg else 'Balanced accuracy (%)'); plt.legend()
 
     plt.tight_layout()
-    plt.savefig(os.path.join(CONFIG['results_dir'], 'training_curves_pd.png'), dpi=150)
+    plt.savefig(os.path.join(config['results_dir'], 'training_curves_pd.png'), dpi=150)
+    return results
 
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main():
+    print("=" * 60)
+    print("PART 2: PARKINSON'S DISEASE DETECTION")
+    print("=" * 60)
+    print(f"Device:  {CONFIG['device']}")
+    print(f"Dataset: PhysioNet Gait in PD")
+    print(f"Task:    {CONFIG['task']}")
+    print("=" * 60)
+
+    os.makedirs(CONFIG['save_dir'],   exist_ok=True)
+    os.makedirs(CONFIG['results_dir'], exist_ok=True)
+
+    if CONFIG['task'] == 'hy_stage':
+        CONFIG['num_classes'] = 5
+    num_classes = CONFIG['num_classes']
+
+    log_run_config(CONFIG)
+
+    # ── Load subject information ──────────────────────────────────────────────
+    print("\nLoading dataset...")
+    subjects_df = load_subject_info(CONFIG['data_root'])
+
+    if len(subjects_df) == 0:
+        print("❌ No data found! Please check data_root path.")
+        print(f"   Current path: {CONFIG['data_root']}")
+        print("   Set the DATA_ROOT environment variable, e.g.:")
+        print("     export DATA_ROOT=/path/to/gait-in-parkinsons-disease-1.0.0")
+        return
+
+    print(f"Found {len(subjects_df)} files across {subjects_df['subject_id'].nunique()} subjects")
+    print(f"  PD patients:      {subjects_df[subjects_df['label']==1]['subject_id'].nunique()} subjects")
+    print(f"  Healthy controls: {subjects_df[subjects_df['label']==0]['subject_id'].nunique()} subjects")
+
+    if CONFIG['use_cv'] and CONFIG['task'] != 'severity':
+        run_cross_validation(subjects_df, CONFIG, num_classes)
+        print("\n" + "=" * 60)
+        print("CROSS-VALIDATION COMPLETE")
+        print(f"Checkpoints: {CONFIG['save_dir']}")
+        print(f"Results:     {CONFIG['results_dir']}")
+        print("=" * 60)
+        return
+
+    if CONFIG['use_cv']:
+        print("\n  Note: cross-validation is implemented for the classification "
+              "tasks only; falling back to the single split for 'severity'.")
+
+    run_single_split(subjects_df, CONFIG, num_classes)
     print("\n" + "=" * 60)
     print("TRAINING COMPLETE")
-    print(f"Best validation {'MAE' if is_reg else 'accuracy'}: {best_val:.2f} (epoch {best_epoch})")
     print(f"Checkpoints: {CONFIG['save_dir']}")
     print(f"Results:     {CONFIG['results_dir']}")
     print("=" * 60)

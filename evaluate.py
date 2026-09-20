@@ -10,6 +10,11 @@ Usage:
 If --data_root is omitted, the DATA_ROOT environment variable is used.
 If that is also unset, defaults to './gait-in-parkinsons-disease-1.0.0'.
 
+This script scores the SINGLE-SPLIT checkpoint, i.e. the model main.py trains
+when CONFIG['use_cv'] is False. When main.py is run with cross-validation (the
+default), the headline numbers are the per-fold and pooled out-of-fold results
+in results_pd/cv_results.json, not this script's output.
+
 Evaluation runs on the HELD-OUT TEST SUBJECTS ONLY. The subject-level split is
 rebuilt with main.make_subject_splits() using the same CONFIG and seed that
 training used, so the train and validation subjects the model has already seen
@@ -42,6 +47,8 @@ from main import (
     load_subject_info,
     make_subject_splits,
     aggregate_by_subject,
+    classification_metrics,
+    _json_safe,
     CONFIG,
     set_seed,
 )
@@ -138,7 +145,13 @@ def main():
     print(f"Data root  : {args.data_root}")
     print(f"Task       : {args.task}")
     print(f"Device     : {device}")
+    print(f"Fusion     : {CONFIG['fusion']} | use_lstm: {CONFIG['use_lstm']}")
     print("=" * 60)
+
+    if CONFIG['use_cv']:
+        print("\n  Note: CONFIG['use_cv'] is True, so main.py's headline results come")
+        print("        from cross-validation (results_pd/cv_results.json). This script")
+        print("        scores the single-split checkpoint on that split's test subjects.")
 
     # ── Load checkpoint ───────────────────────────────────────────────────────
     if not Path(args.checkpoint).exists():
@@ -245,86 +258,65 @@ def main():
         results['subject_MAE'] = float(subj_mae)
 
     else:
-        acc    = accuracy_score(all_labels, all_preds) * 100
-        report = classification_report(all_labels, all_preds, digits=4)
-        cm     = confusion_matrix(all_labels, all_preds)
+        num_cls = num_classes
+        report  = classification_report(all_labels, all_preds, digits=4)
+
+        # Shared metric helper, so these numbers are computed exactly the way
+        # main.py computes them for the single-split and cross-validation paths.
+        win = classification_metrics(all_labels, all_preds, all_probs, num_cls)
 
         # Subject level: one majority-vote prediction per person, which is the
         # clinically meaningful unit — a clinician diagnoses a patient, not a
         # 10-second window.
-        yt, yp  = aggregate_by_subject(dataset, all_preds, all_labels, args.task)
-        subj_acc = accuracy_score(yt, yp) * 100
-        subj_cm  = confusion_matrix(yt, yp)
+        yt, yp = aggregate_by_subject(dataset, all_preds, all_labels, args.task)
+        subj = classification_metrics(yt, yp, None, num_cls)
 
-        # What a constant majority-class predictor would score, for context
-        counts   = np.bincount(all_labels.astype(int))
-        baseline = 100.0 * counts.max() / counts.sum()
+        class_names = (['Healthy', 'PD'] if args.task == 'pd_detection'
+                       else [f'H&Y {i}' for i in range(num_cls)])
+        binary = (num_cls == 2)
 
-        if args.task == 'pd_detection':
-            class_names = ['Healthy', 'PD']
-            # Sensitivity / Specificity from confusion matrix
-            tn, fp, fn, tp = cm.ravel()
-            sensitivity = tp / (tp + fn) * 100 if (tp + fn) else float('nan')
-            specificity = tn / (tn + fp) * 100 if (tn + fp) else float('nan')
-            results.update({'Sensitivity': sensitivity, 'Specificity': specificity})
-
-            s_tn, s_fp, s_fn, s_tp = subj_cm.ravel()
-            subj_sensitivity = s_tp / (s_tp + s_fn) * 100 if (s_tp + s_fn) else float('nan')
-            subj_specificity = s_tn / (s_tn + s_fp) * 100 if (s_tn + s_fp) else float('nan')
-            results.update({
-                'subject_Sensitivity': subj_sensitivity,
-                'subject_Specificity': subj_specificity,
-            })
-
-            # ROC-AUC (binary), window level
-            pd_probs = np.array(all_probs)[:, 1]
-            auc = plot_roc_curve(
-                all_labels, pd_probs,
-                Path(args.output_dir) / 'roc_curve.png',
-                title='ROC Curve — PD vs. Healthy (Held-out test subjects)',
-            )
-            results['ROC_AUC'] = auc
-        else:
-            class_names = [f'H&Y {i}' for i in range(num_classes)]
-
-        results['Accuracy'] = acc
-        results['subject_Accuracy'] = float(subj_acc)
-        results['majority_baseline'] = float(baseline)
-        results['confusion_matrix'] = cm.tolist()
-        results['subject_confusion_matrix'] = subj_cm.tolist()
+        results.update({'window': win, 'subject': subj})
 
         print("\n── Window-level Metrics — Held-out test subjects ─")
-        print(f"  Windows     : {len(all_labels)}")
-        print(f"  Accuracy    : {acc:.2f}%")
-        if args.task == 'pd_detection':
-            print(f"  Sensitivity : {sensitivity:.2f}%")
-            print(f"  Specificity : {specificity:.2f}%")
-            print(f"  ROC-AUC     : {auc:.4f}")
+        print(f"  Windows           : {win['n']}")
+        print(f"  Accuracy          : {win['accuracy']:.2f}%")
+        print(f"  Balanced accuracy : {win['balanced_accuracy']:.2f}%")
+        if binary:
+            print(f"  Sensitivity       : {win['sensitivity']:.2f}%")
+            print(f"  Specificity       : {win['specificity']:.2f}%")
+            print(f"  ROC-AUC           : {win['roc_auc']:.4f}")
+        print(f"  Majority baseline : {win['majority_baseline']:.2f}%")
         print("  Confusion matrix (windows):")
-        print(cm)
+        print(np.array(win['confusion_matrix']))
 
         print("\n── Subject-level Metrics (majority vote) ────────")
-        print(f"  Subjects    : {len(yt)}")
-        print(f"  Accuracy    : {subj_acc:.2f}%")
-        if args.task == 'pd_detection':
-            print(f"  Sensitivity : {subj_sensitivity:.2f}%")
-            print(f"  Specificity : {subj_specificity:.2f}%")
+        print(f"  Subjects          : {subj['n']}")
+        print(f"  Accuracy          : {subj['accuracy']:.2f}%")
+        print(f"  Balanced accuracy : {subj['balanced_accuracy']:.2f}%")
+        if binary:
+            print(f"  Sensitivity       : {subj['sensitivity']:.2f}%")
+            print(f"  Specificity       : {subj['specificity']:.2f}%")
+        print(f"  Majority baseline : {subj['majority_baseline']:.2f}%")
         print("  Confusion matrix (subjects):")
-        print(subj_cm)
-
-        print(f"\n  For context, always predicting the majority class "
-              f"would score {baseline:.2f}% at window level.")
+        print(np.array(subj['confusion_matrix']))
 
         print("\n── Classification Report (windows) ──────────────")
         print(report)
 
+        if binary:
+            plot_roc_curve(
+                all_labels, np.asarray(all_probs)[:, 1],
+                Path(args.output_dir) / 'roc_curve.png',
+                title='ROC Curve — PD vs. Healthy (Held-out test subjects)',
+            )
+
         plot_confusion_matrix(
-            cm, class_names,
+            np.array(win['confusion_matrix']), class_names,
             Path(args.output_dir) / 'confusion_matrix.png',
             title='Confusion Matrix — Held-out test subjects (windows)',
         )
         plot_confusion_matrix(
-            subj_cm, class_names,
+            np.array(subj['confusion_matrix']), class_names,
             Path(args.output_dir) / 'confusion_matrix_subjects.png',
             title='Confusion Matrix — Held-out test subjects (majority vote)',
         )
@@ -332,7 +324,7 @@ def main():
     # ── Save results JSON ─────────────────────────────────────────────────────
     results_path = Path(args.output_dir) / 'eval_results.json'
     with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
+        json.dump(_json_safe(results), f, indent=2)
     print(f"\n  Saved metrics: {results_path}")
 
     print("\n" + "=" * 60)
