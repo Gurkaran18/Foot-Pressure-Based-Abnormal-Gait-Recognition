@@ -197,6 +197,18 @@ python evaluate.py --checkpoint ./checkpoints_pd/best_model_pd.pth \
 ```
 When `use_cv` is `True`, the headline numbers are the cross-validation results in `results_pd/cv_results.json`, not this script's output.
 
+### 6. Post-hoc analyses (gait features, leakage, explainability, cross-study)
+Run after `main.py`, in this order (each is a standalone script, ~seconds on CPU except occlusion, which uses the GPU):
+```bash
+python gait_features.py    # stride/swing/stance/cadence/asymmetry features, RF + XGBoost, late fusion with MSCAF
+python leakage_demo.py     # random window-level split vs subject-level split
+python explain.py          # out-of-fold SHAP (features) + sensor-occlusion foot heatmap (MSCAF)
+python cross_study.py      # leave-one-study-out (Ga / Ju / Si)
+python results_summary.py  # slide-ready table: results_summary.md / .csv / .png
+streamlit run app.py       # optional demo: upload a trial, get P(PD), features, foot heatmap
+```
+All of them reuse `load_subject_info()` and the **same folds** as `main.py` (`make_cv_folds`, same seed); shared code is in `gait_common.py`. Outputs go to `/kaggle/working/results_new/` on Kaggle, `./results_new/` elsewhere. Fusion needs MSCAF's out-of-fold probabilities: `main.py` now saves them (`prob_pd` in `cv_results.json`); for an older run they are recomputed from `checkpoints_pd/best_model_pd_fold*.pth` without retraining.
+
 ---
 
 ## 📁 Project Structure
@@ -205,12 +217,19 @@ When `use_cv` is `True`, the headline numbers are the cross-validation results i
 Foot-Pressure-Based-Abnormal-Gait-Recognition/
 ├── main.py           ← Model, dataset loader, training, cross-validation
 ├── evaluate.py       ← Standalone evaluation of a single-split checkpoint
+├── gait_common.py    ← Shared: paths, main.py folds, gait-event detection, features
+├── gait_features.py  ← Gait-feature models + late fusion with MSCAF
+├── leakage_demo.py   ← Window-level vs subject-level split
+├── explain.py        ← SHAP + sensor occlusion
+├── cross_study.py    ← Leave-one-study-out
+├── results_summary.py← Slide-ready summary table
+├── app.py            ← Streamlit demo
 ├── requirements.txt
 ├── README.md
 └── cv_summary.png    ← Cross-validation results plot
 ```
 
-Generated at run time (not tracked): `results_pd/`, `checkpoints_pd/`.
+Generated at run time (not tracked): `results_pd/`, `checkpoints_pd/`, `results_new/`.
 
 ---
 
@@ -240,22 +259,23 @@ Every metric is reported at two levels:
 - The **test fold is scored exactly once**, after restoring that fold's best-validation checkpoint.
 - The loss is **class-weighted CrossEntropy**, with inverse-frequency weights computed from **each fold's training windows only**.
 
-### Headline result
+### Headline result — MSCAF-Gait
 
 Pooled out-of-fold, **subject level**, 165 subjects, one prediction each:
 
 | Metric | Value |
 |---|---|
-| **Balanced accuracy** | **67.34%** |
-| Accuracy | 68.48% |
-| Sensitivity (PD correctly identified) | 76.34% |
-| Specificity (Healthy correctly identified) | 58.33% |
+| **Balanced accuracy** | **65.28%** |
+| Accuracy | 65.45% |
+| Sensitivity (PD correctly identified) | 66.67% |
+| Specificity (Healthy correctly identified) | 63.89% |
+| ROC-AUC (mean window probability) | 0.728 |
 | Majority-class baseline | 56.36% |
 
 | | Predicted Healthy | Predicted PD |
 |---|---|---|
-| **Actual Healthy** (72) | 42 | 30 |
-| **Actual PD** (93) | 22 | 71 |
+| **Actual Healthy** (72) | 46 | 26 |
+| **Actual PD** (93) | 31 | 62 |
 
 Because each subject is held out exactly once, this is a single number over the whole cohort rather than an average of five fold-sized estimates.
 
@@ -265,31 +285,68 @@ Because each subject is held out exactly once, this is a single number over the 
 
 | Metric | Mean ± Std |
 |---|---|
-| Accuracy | 69.92 ± 6.10% |
-| Balanced accuracy | 66.05 ± 6.62% |
-| Sensitivity | 75.54 ± 15.73% |
-| Specificity | 56.56 ± 22.19% |
-| ROC-AUC | 0.7853 ± 0.0696 |
+| Accuracy | 67.59 ± 10.13% |
+| Balanced accuracy | 65.87 ± 6.76% |
+| Sensitivity | 70.38 ± 23.17% |
+| Specificity | 61.35 ± 23.80% |
+| ROC-AUC | 0.7866 ± 0.0665 |
 | Majority baseline | 68.73 ± 7.68% |
 
 **Subject level**, mean ± std over the 5 folds:
 
 | Metric | Mean ± Std |
 |---|---|
-| Accuracy | 68.48 ± 7.07% |
-| Balanced accuracy | 67.41 ± 8.40% |
-| Sensitivity | 76.43 ± 11.52% |
-| Specificity | 58.38 ± 23.50% |
+| Accuracy | 65.45 ± 8.70% |
+| Balanced accuracy | 65.47 ± 8.02% |
+| Sensitivity | 66.84 ± 23.06% |
+| Specificity | 64.10 ± 24.94% |
+| ROC-AUC | 0.7963 ± 0.0551 |
 
 ![Cross-validation summary](cv_summary.png)
 
-> Performance varies considerably across folds — specificity swings by roughly ±22% — which is exactly why cross-validation is reported here instead of a single split.
+> Performance varies considerably across folds — sensitivity and specificity each swing by roughly ±23–25% — which is exactly why cross-validation is reported here instead of a single split.
+
+### Interpretable gait features and late fusion
+
+`gait_features.py` detects heel strikes and toe-offs from the two total-force columns and computes 13 gait features per subject (stride time and its variability, swing / stance / double-support %, cadence, L/R asymmetry, peak forces). Random Forest and XGBoost are trained on them under **the same 5-fold subject-level folds** as MSCAF-Gait, with fixed (untuned) hyper-parameters. Late fusion averages the two models' out-of-fold P(PD) with fixed equal weights.
+
+Pooled out-of-fold, subject level, 165 subjects:
+
+| Model | Balanced acc. | Sensitivity | Specificity | ROC-AUC |
+|---|---|---|---|---|
+| Majority-class baseline | 50.00% | — | — | 0.500 |
+| MSCAF-Gait (deep, raw 16 sensors) | 65.28% | 66.67% | 63.89% | 0.728 |
+| Random Forest (13 gait features) | 75.20% | 79.57% | 70.83% | 0.842 |
+| **XGBoost (13 gait features)** | **78.36%** | **81.72%** | **75.00%** | **0.860** |
+| MSCAF + Random Forest (late fusion) | 71.12% | 74.19% | 68.06% | 0.813 |
+| MSCAF + XGBoost (late fusion) | 74.82% | 77.42% | 72.22% | 0.830 |
+
+The 13 hand-crafted gait features outperform the deep model by about 13 balanced-accuracy points, and equal-weight late fusion **does not** improve on XGBoost alone: averaging in the weaker MSCAF probability pulls the stronger model down.
+
+### Robustness and explainability
+
+**Data leakage** (`leakage_demo.py`, XGBoost, 6,185 windows): a random window-level split scores **86.96%** balanced accuracy (AUC 0.945) versus **67.76%** (AUC 0.733) with a subject-level split — **+19.2 points** of inflation from letting the same person's windows appear in both train and test.
+
+**Cross-study generalisation** (`cross_study.py`, XGBoost, leave-one-study-out):
+
+| Held-out study | Balanced acc. | Sensitivity | Specificity | ROC-AUC |
+|---|---|---|---|---|
+| Ga | 77.11% | 93.10% | 61.11% | 0.822 |
+| Ju | 73.66% | 79.31% | 68.00% | 0.828 |
+| Si | 74.83% | 60.00% | 89.66% | 0.828 |
+| **Mean** | **75.20%** | 77.47% | 72.92% | 0.826 |
+
+Performance on a study never seen in training stays close to the pooled CV figure, so the feature model is not merely learning each lab's protocol — although the decision threshold shifts between studies (sensitivity vs. specificity trade off differently on Ga and Si).
+
+**What the models look at** (`explain.py`): the top gait features by mean |SHAP| are swing asymmetry, swing-time variability (CV) and double-support time — established clinical markers of Parkinsonian gait. Sensor occlusion on MSCAF-Gait ranks L3, R5, L8 and L5 as the most influential sensors.
+
+All figures and JSON metrics are written to `results_new/` (see *Post-hoc analyses* above).
 
 ### Clinical reading
 
-**Sensitivity** is the metric that tracks missed PD cases: at 76.34%, **22 of 93 PD subjects were not flagged**. Missing a PD diagnosis is generally more harmful than a false alarm, so sensitivity is the number to improve first. Specificity of 58.33% means 30 of 72 healthy subjects were incorrectly flagged as PD.
+**Sensitivity** is the metric that tracks missed PD cases: MSCAF-Gait reaches 66.67%, so **31 of 93 PD subjects were not flagged**, and 26 of 72 healthy subjects were incorrectly flagged as PD (specificity 63.89%). The gait-feature XGBoost model misses fewer PD subjects (sensitivity 81.72%) while also raising fewer false alarms (specificity 75.00%).
 
-Balanced accuracy (67.34%) clears the majority-class baseline (56.36%) by about 11 points, so the model has learned something beyond the class prior — but the margin is modest and the fold-to-fold variance is large. These results are **not clinically usable** and are reported as a research baseline.
+MSCAF-Gait's balanced accuracy (65.28%) clears the majority-class baseline (56.36%) by about 9 points, so the model has learned something beyond the class prior — but the margin is modest and the fold-to-fold variance is large. None of these results are **clinically usable**; they are reported as a research baseline.
 
 ---
 
@@ -320,13 +377,14 @@ Several evaluation flaws in earlier versions of this project inflated the report
 
 ## 🧪 Future Work
 
-- [ ] Improve sensitivity — 22 of 93 PD subjects are currently missed
+- [ ] Improve MSCAF-Gait sensitivity — 31 of 93 PD subjects are currently missed
 - [ ] Reduce fold-to-fold variance (stronger regularization, more aggressive augmentation)
 - [ ] Transformer-based temporal modeling (ViT / Temporal Transformer)
 - [ ] Real-time gait inference pipeline
 - [ ] Wearable/IoT deployment (edge inference)
 - [ ] Generalization across multiple gait datasets
-- [ ] Explainability module (GradCAM for temporal attention visualization)
+- [x] Explainability — SHAP for the gait-feature model, sensor occlusion for MSCAF-Gait (`explain.py`)
+- [ ] GradCAM for temporal attention visualization
 
 ---
 
