@@ -1043,7 +1043,9 @@ def evaluate_test_split(model, test_dataset, test_loader, config, num_classes):
     Score one held-out test split, at window level and subject level.
 
     Returns a JSON-ready dict plus the per-subject out-of-fold predictions, so
-    the caller can pool them across folds.
+    the caller can pool them across folds. The subject prediction is still the
+    majority vote; the subject probability (mean of the window class
+    probabilities) is returned alongside for ROC-AUC and late fusion.
     """
     preds, labels, probs = collect_predictions(
         model, test_loader, config['device'], config['task'], return_probs=True)
@@ -1052,9 +1054,14 @@ def evaluate_test_split(model, test_dataset, test_loader, config, num_classes):
 
     yt, yp, sids = aggregate_by_subject(
         test_dataset, preds, labels, config['task'], return_ids=True)
-    subject = classification_metrics(yt, yp, None, num_classes)
 
-    return {'window': window, 'subject': subject}, (sids, yt, yp)
+    # aggregate_by_subject() visits subjects in dataset order, so the means
+    # below line up with sids
+    win_sids = np.array([s['subject_id'] for s in test_dataset.sequences])
+    subj_probs = np.array([probs[win_sids == sid].mean(axis=0) for sid in sids])
+    subject = classification_metrics(yt, yp, subj_probs, num_classes)
+
+    return {'window': window, 'subject': subject}, (sids, yt, yp, subj_probs)
 
 
 def print_split_metrics(res, title, binary=True):
@@ -1122,7 +1129,7 @@ def log_run_config(config):
 _CV_WINDOW_KEYS  = ['accuracy', 'balanced_accuracy', 'sensitivity',
                     'specificity', 'roc_auc', 'majority_baseline']
 _CV_SUBJECT_KEYS = ['accuracy', 'balanced_accuracy', 'sensitivity',
-                    'specificity', 'majority_baseline']
+                    'specificity', 'roc_auc', 'majority_baseline']
 
 
 def summarise_folds(fold_results):
@@ -1188,7 +1195,7 @@ def run_cross_validation(subjects_df, config, num_classes):
     folds = make_cv_folds(subjects_df, config)
 
     fold_results, fold_meta = [], []
-    oof_sids, oof_true, oof_pred = [], [], []
+    oof_sids, oof_true, oof_pred, oof_prob = [], [], [], []
 
     for k, (train_ids, val_ids, test_ids) in enumerate(folds, start=1):
         print("\n" + "=" * 60)
@@ -1221,7 +1228,7 @@ def run_cross_validation(subjects_df, config, num_classes):
 
         # The test fold is touched exactly once, here, with the best-val weights
         restore_best(model, ckpt_path, config)
-        res, (sids, yt, yp) = evaluate_test_split(
+        res, (sids, yt, yp, sp) = evaluate_test_split(
             model, test_dataset, test_loader, config, num_classes)
 
         print_split_metrics(res, f"Fold {k} — held-out test subjects", binary)
@@ -1248,6 +1255,7 @@ def run_cross_validation(subjects_df, config, num_classes):
         oof_sids.extend(sids.tolist())
         oof_true.extend(yt.tolist())
         oof_pred.extend(yp.tolist())
+        oof_prob.extend(sp.tolist())
 
     # ── Across-fold summary ──────────────────────────────────────────────
     summary = summarise_folds(fold_results)
@@ -1258,7 +1266,7 @@ def run_cross_validation(subjects_df, config, num_classes):
     # rather than an average of five fold-sized estimates.
     assert len(oof_sids) == len(set(oof_sids)), "a subject was scored in two folds"
     pooled = classification_metrics(
-        np.array(oof_true), np.array(oof_pred), None, num_classes)
+        np.array(oof_true), np.array(oof_pred), np.array(oof_prob), num_classes)
 
     print("\n" + "=" * 60)
     print(f"CROSS-VALIDATION SUMMARY  ({len(folds)} folds)")
@@ -1281,6 +1289,7 @@ def run_cross_validation(subjects_df, config, num_classes):
     if binary:
         print(f"    sensitivity       : {pooled['sensitivity']:.2f}%")
         print(f"    specificity       : {pooled['specificity']:.2f}%")
+        print(f"    ROC-AUC           : {pooled['roc_auc']:.4f}  (mean window probability)")
     print(f"    majority baseline : {pooled['majority_baseline']:.2f}%")
     print(f"    confusion matrix  : {pooled['confusion_matrix']}")
 
@@ -1294,8 +1303,10 @@ def run_cross_validation(subjects_df, config, num_classes):
         'summary': summary,
         'pooled_out_of_fold_subject': pooled,
         'pooled_out_of_fold_predictions': [
-            {'subject_id': s, 'true': int(t), 'pred': int(p)}
-            for s, t, p in zip(oof_sids, oof_true, oof_pred)
+            # prob_pd: mean window P(PD), used by gait_features.py for fusion
+            {'subject_id': s, 'true': int(t), 'pred': int(p),
+             'prob_pd': float(pr[1]) if num_classes == 2 else None}
+            for s, t, p, pr in zip(oof_sids, oof_true, oof_pred, oof_prob)
         ],
     }
     out_path = os.path.join(config['results_dir'], 'cv_results.json')
