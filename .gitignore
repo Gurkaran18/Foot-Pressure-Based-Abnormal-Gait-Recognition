@@ -35,6 +35,7 @@ data/
 
 # ── Results / output directories ──────────────────────────────────────────
 results_pd/
+results_new/
 eval_results/
 logs/
 
