@@ -1,0 +1,44 @@
+# A1.1 — Decision Register
+
+**Scope:**
+- D1–D12 come from [PHASE_A1_FEATURE_AUDIT.md](../../PHASE_A1_FEATURE_AUDIT.md).
+- D13–D17 are new decisions raised in [A1_1_METHODS_REVISIONS.md](A1_1_METHODS_REVISIONS.md) ("R" numbers refer to that document).
+
+**Status values:**
+- **Approved** — already approved by you
+- **Proposed** — needs your approval
+- **Blocked** — needs evidence first
+
+**Tags:** as in the methods-revisions document ([C], [D], [P], [M], [A], [U], [K]).
+
+| ID | Decision | Recommended choice | Evidence | Remaining uncertainty | Approval required? | Status |
+|---|---|---|---|---|---|---|
+| **D1** | Primary feature set | **T1-core**: stride_time_mean, stride_time_cv, swing_time_cv, stance_pct, asym_swing. **T1-fallback**: stride_time_mean, stride_time_cv. Double support conditional, outside the primary model | All five are computed within each foot (no L/R sync dependence) and independent of amplitude [C]. Univariate AUC 0.57–0.78 [C]. Two existing features are exact duplicates (ρ = −1) [C] | Toe-off bias and jitter on WearGait-PD (R6, R7); the univariate AUCs came from condition-mixed features | No (approved). Fallback trigger rule in D8 | Approved |
+| **D2** | Primary model | **L2 logistic regression.** Weighted vs unweighted decided by the pre-declared internal rule in R8 (default: **unweighted**) | Class weighting mainly shifts the intercept; AUC is essentially unchanged; balanced probabilities are miscalibrated at the real prevalence (R8) | Internal calibration and coefficient-stability results (A2) | **Yes:** approve the selection rule in R8 | Proposed |
+| **D3** | gaitpdb training cohort | **All 165 subjects (`_01`)** as primary. Ga + Ju (101) as sensitivity. Leave-one-study-out retained | Si `_01` is very likely level-ground walking, not treadmill (PhysioNet statement; Frenkel-Toledo protocol; turn-interrupted stride runs) [D][M] | File-level mapping of Si `_01` to the "comfortable speed, level ground" condition [A] | **Yes:** confirm after reading R0/R9 | Proposed |
+| **D4** | Usual-walking definition | **`_01` only, for all studies.** Exclude Ga `_02` (undocumented), Ga `_10` (dual task), Ju `_02`–`_07` (RAS/carryover) | All 165 subjects have `_01` [D]. Ju protocol [D] | Meaning of Ga `_02` [U]. Ju walk-number mapping [A]. Evidence needed: Yogev 2005 and Hausdorff 2007 full texts, or the data authors | **Yes** | Proposed |
+| **D5** | Feature version v2 | Versioned features **v2**: double support redefined per valid stride; event times in seconds; legacy v1 kept for reproduction | Issues I3, I4 [C] | None for v1 reproduction (an equivalence test is required) | **Yes** (with D17) | Proposed |
+| **D6** | Confirmatory hypotheses | **H1:** frozen M1 external AUC > 0.5 (0.70 is only an interpretation benchmark). **H2 (revised):** speed-adjusted external AAUC of frozen M1 > 0.5, using WearGait-PD's own walkway speed. **H3 (revised):** a residual cross-dataset gap remains after protocol matching (not causal) | R1, R2 | H2 depends on walkway speed being available for SelfPace (Phase B) | **Yes:** approve the revised H2/H3 wording | Proposed |
+| **D7** | K levels and emulation | K-curve **required**: K = 5, 8, 10, 15, 20, 25 + all. Primary scheme S1 (contiguous window); S2 (random strides) as sensitivity. 20 draws per level; both training regimes reported. Emulation = 4 segments of about 6–7 consecutive valid strides, turn-adjacent strides removed | The minimum usual-walk stride count per foot is about 31 [M]. WearGait-PD SelfPace geometry [P] | Final segment length and K_target (see D16) | **Yes** | Proposed |
+| **D8** | Insole–walkway agreement and tolerances | The R6 procedure: one shared L/R offset per trial; offset-free duration metrics; drift regression. **Provisional tolerances:** stride bias ≤ 10 ms; stance bias ≤ 20 ms; SD of swing differences ≤ 15 ms; double support bias ≤ 2 pp. If a tolerance fails, drop the feature and use the pre-declared fallback; no correction | Formula for jitter-induced CV inflation (R6.3); sampling resolution | Tolerances are engineering choices, not clinical standards. They will be restated relative to internal effect sizes in A2 | **Yes** | Proposed |
+| **D9** | Decision threshold | Follows D2: **unweighted → training prevalence (0.564)**; balanced → 0.5. Secondary: gaitpdb out-of-fold Youden threshold. Never chosen on WearGait-PD | R8 | — | **Yes** | Proposed |
+| **D10** | Blinding and pre-registration | Custodian procedure from A1 §2.13 (approved as Refinement 2). Pre-registration: **git tag + OSF** before unblinding | — | **Name the custodian** | **Yes:** name the custodian; confirm OSF | Proposed |
+| **D11** | DBS and age-overlap subsets | DBS included in the primary analysis; DBS-excluded sensitivity applied by the custodian. Age-overlap range defined by the custodian from aggregate data before unblinding | DBS status reveals the label [P] | Size of the subsets (Phase B aggregate counts) | **Yes** | Proposed |
+| **D12** | External role of MSCAF | **Internal reference only.** No external evaluation unless a pre-declared 16 → 8 mapping is separately approved (exploratory) | Different sensor count, layout and units [P][D] | — | **Yes** | Proposed |
+| **D13** | How H2 handles speed | **Covariate-adjusted AUC within WearGait-PD** (R2.2). Frozen M2-vs-M0 ΔAUC only descriptive. Internal analogue adjusted for `Speed_01` within each study | Speed methods: Si verified (stopwatch, middle 10 m) [D]; Ga and Ju unknown [U]; WearGait-PD is walkway-based [P] | Whether WearGait-PD SelfPace speed exists, and its definition (Phase B) | **Yes** | Proposed |
+| **D14** | Multiplicity procedure | **Holm–Bonferroni over H1–H3** (one-sided, family α = 0.05). H2 interpreted only if H1 is rejected | Fixed sequence would block H3 exactly when it matters most (R10) | — | **Yes** | Proposed |
+| **D15** | Train on full-walk or K-matched features | Pre-declared internal rule: if the emulated **train-K/test-K** AUC exceeds **train-full/test-K** by ≥ 0.02 (median over draws), train the frozen model on K-matched pseudo-walks; otherwise train on full walks | K-curve design (R4) | A2/A3 results | **Yes** | Proposed |
+| **D16** | Source of K_target (stride count expected in WearGait-PD) | **Option A (recommended):** fix from the published protocol geometry now (candidates 10/15/20; final pick from the label-blind inventory median, rounded **down** to a grid level). Option B: fix from geometry only | Protocol [P]. Using label-free stride counts is a design choice, not fitting a parameter, but it is data-dependent | Whether you accept label-blind external stride counts as design input | **Yes** | Proposed |
+| **D17** | SD convention for CV features | **Sample SD (ddof = 1)** in v2 (the current code uses ddof = 0) | ddof = 0 understates CV by √((K−1)/K), i.e. −10.6% at K = 5 (R4) | — | **Yes** (with D5) | Proposed |
+
+## Questions needing your decision before A2
+
+1. **Ga `_02`:**
+   - Accept excluding it from the primary analysis (D4)?
+   - Can you obtain the Yogev 2005 and Hausdorff 2007 Methods sections through the NIT library? These would also settle the Ga/Ju speed methods.
+2. **H2:** approve the speed-adjusted AUC formulation (D6/D13) in place of transporting a speed coefficient.
+3. **Multiplicity:** Holm (recommended) or fixed sequence (D14).
+4. **K_target source** (D16): Option A or B.
+5. **Model weighting rule and threshold** (D2/D9).
+6. **Custodian name** (D10).
+7. **Errata:** may I later correct the "Si = treadmill" statements in `PROJECT_OVERVIEW.md` and the [cross_study.py:8](../../cross_study.py#L8) docstring? This is a separate, documentation-only change. No change will be made without approval.
