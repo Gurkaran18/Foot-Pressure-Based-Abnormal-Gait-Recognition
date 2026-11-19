@@ -31,7 +31,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Decision register D2–D17 | Waiting for the lead's approval |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Not started |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
-| Team setup (Part 1) | Step 1 done; Step 2 (collaborator) and Step 3 (protect `main`) pending |
+| Team setup (Part 1) | Done: docs pushed, collaborator invited (waiting for him to accept), `main` protected |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
 ## Work split
@@ -42,6 +42,14 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-19 — GitHub team setup done (Part 1, Steps 2–3)
+**Who:** Lead  **Branch/commit:** main
+- Step 2: collaborator invite sent to the teammate from the browser. It takes effect once he accepts.
+- Step 3: branch protection turned on for `main` with `gh api`:
+  - a pull request with 1 approving review is required;
+  - `enforce_admins` is false, so the owner can still push directly in an emergency (for example the `model-frozen` tag).
+- Next: start Phase A2 Day 1 on the `data/day1` and `model/day1` branches. This is waiting on the lead's approval of the decision register D2–D17.
 
 ### 2026-11-19 — CLAUDE.md added (shared Claude Code rules)
 **Who:** Lead  **Branch/commit:** main
