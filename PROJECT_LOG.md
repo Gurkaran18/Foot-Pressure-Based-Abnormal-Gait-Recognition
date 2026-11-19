@@ -28,8 +28,8 @@ This is the shared record of everything changed or decided in this project. **Bo
 |---|---|
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
-| Decision register D2–D17 | Waiting for the lead's approval |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Not started |
+| Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Skeleton done (data/day1); implementation in progress |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, collaborator invited (waiting for him to accept), `main` protected |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,18 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-19 — Decisions approved; A2 skeleton created
+**Who:** Lead  **Branch/commit:** data/day1
+- Decision register: D2–D17 marked Approved. D10 was modified: no custodian; the freeze is the `model-frozen` git tag, and `labels/` is not read before it. An approval record was added to `A1_1_DECISION_REGISTER.md`.
+- Created the `experiments/external_transport/` skeleton:
+  - `config/a2.yaml` with the approved defaults (threshold 0.564, unweighted LR, `_01` only, ddof = 1, K levels);
+  - 17 `etx/` module stubs, each with its owner and function signatures;
+  - 11 step scripts (`a2_00`–`a2_10`);
+  - `tests/conftest.py` (real-data tests are skipped when `GAITPDB_ROOT` is unset), `requirements-a2.txt` and a README.
+- `.gitignore`: added `labels/`, `experiments/external_transport/outputs/`, WearGait folders and `*.parquet`. The repo is public, so no data is committed.
+- Check: all modules import. No logic implemented yet; every function raises NotImplementedError.
+- Next: once this is merged, the teammate branches `model/day1` from `main`. The lead implements guard, manifest, conditions (T1, T2, T10), then signal, events, features (T3–T5).
 
 ### 2026-11-19 — GitHub team setup done (Part 1, Steps 2–3)
 **Who:** Lead  **Branch/commit:** main

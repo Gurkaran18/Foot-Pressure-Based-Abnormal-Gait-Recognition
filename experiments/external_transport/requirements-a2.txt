@@ -1,0 +1,5 @@
+# Extra dependencies for experiments/external_transport (on top of ../../requirements.txt)
+pyyaml>=6.0
+pytest>=7.4
+pyarrow>=14.0
+scipy>=1.11
