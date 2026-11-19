@@ -43,6 +43,16 @@ This is the shared record of everything changed or decided in this project. **Bo
 
 ## Log entries
 
+### 2026-11-19 — CLAUDE.md added (shared Claude Code rules)
+**Who:** Lead  **Branch/commit:** main
+- Added `CLAUDE.md`. Every Claude Code session reads it automatically, for both team members.
+- It covers:
+  - the mandatory `PROJECT_LOG.md` entry format;
+  - who owns which modules;
+  - research integrity rules (subject-level splits, `_01` cohort, the `labels/` freeze, no synthetic demographics);
+  - protected paths, and no data on the public repo.
+- Why: so both Claude Code sessions follow the same logging and safety rules without anyone having to repeat the prompt.
+
 ### 2026-11-19 — Shared project log created
 **Who:** Lead  **Branch/commit:** main
 - Added `PROJECT_LOG.md`, this file, as the single shared record of changes and decisions.
