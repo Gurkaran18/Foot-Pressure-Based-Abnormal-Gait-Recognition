@@ -1,0 +1,47 @@
+# A2 configuration — approved defaults 2026-11-19 (decision register D2–D17).
+data:
+  gaitpdb_root: ${GAITPDB_ROOT}          # env var; never hard-coded
+  checksums_file: SHA256SUMS.txt
+signal:
+  smooth_s: 0.05
+  debounce_s: 0.10
+  contact_fraction: 0.10                 # of p5..p95 range, per recording
+  percentiles: [5, 95]
+  stride_range_s: [0.5, 3.0]
+  outlier_mads: 3.0
+  fs_uniformity_tol: 0.01
+conditions:
+  version: c1
+  primary_walks: ["01"]                  # D4
+  excluded: {Ga: ["02", "10"], Ju: ["02", "03", "04", "05", "06", "07"]}
+features:
+  version: v2                            # D5, D17 (v1 = legacy, equivalence only)
+  t1_core: [stride_time_mean, stride_time_cv, swing_time_cv, stance_pct, asym_swing]
+  t1_fallback: [stride_time_mean, stride_time_cv]
+  cv_ddof: 1
+  min_strides_per_foot: 10               # D7 (provisional K_min)
+cv:
+  outer_folds: 5
+  repeats: 20
+  inner_folds: 5
+  strata: [label, study]
+  base_seed: 20261118
+models:
+  lr_C_grid: {logspace: [-3, 2, 11]}
+  lr_selection: neg_log_loss
+  lr_weighting: none                     # D2 default; balanced compared in step 05
+  threshold: 0.564                       # D9: training prevalence (unweighted)
+  xgb_t1: {n_estimators: 300, max_depth: 3, learning_rate: 0.05,
+           subsample: 0.8, colsample_bytree: 0.8, min_child_weight: 2}
+uncertainty:
+  bootstrap_cv_B: 500
+  ledell_ic: true
+kcurve:
+  levels: [5, 8, 10, 15, 20, 25, all]
+  draws: 20
+  schemes: [S1_contiguous, S2_random]
+emulation:
+  segments: 4
+  strides_per_segment: [6, 7]
+  drop_turn_adjacent: true
+  draws: 20

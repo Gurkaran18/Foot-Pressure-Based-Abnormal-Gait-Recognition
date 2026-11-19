@@ -50,3 +50,10 @@ Thumbs.db
 # ── Environment variables ──────────────────────────────────────────────────
 .env
 .envrc
+
+# ── External-transport project (public repo: never commit data/labels) ────
+labels/
+experiments/external_transport/outputs/
+weargait*/
+WearGait*/
+*.parquet
