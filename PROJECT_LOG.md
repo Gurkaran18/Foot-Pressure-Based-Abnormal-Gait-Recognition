@@ -31,7 +31,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Skeleton done (data/day1); implementation in progress |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
-| Team setup (Part 1) | Done: docs pushed, collaborator invited (waiting for him to accept), `main` protected |
+| Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
 ## Work split
@@ -42,6 +42,14 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-19 — Merge policy set; Janak joined
+**Who:** Lead  **Branch/commit:** data/day1 (PR #1)
+- Teammate `janakvarshney` accepted the collaborator invite and has write access.
+- Merge policy:
+  - The **Lead merges his own pull requests directly**, using the admin bypass of branch protection.
+  - **The teammate's pull requests need the Lead's approval** before merging; authors can't approve their own pull requests.
+- PR #1 (A2 skeleton) merged by the Lead under this policy.
 
 ### 2026-11-19 — Decisions approved; A2 skeleton created
 **Who:** Lead  **Branch/commit:** data/day1
