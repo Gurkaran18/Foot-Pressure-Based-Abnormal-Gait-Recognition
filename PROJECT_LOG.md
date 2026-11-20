@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Blocks 1–3 done; `subject_v2.csv` ready (165 subjects, 56 tests pass). Block 4 (legacy check) next |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead Day 1 done: Blocks 1–4, legacy gate PASS, `subject_v2.csv` ready, 57 tests pass |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,32 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-21 — Day 1 Block 4: legacy equivalence gate PASSED
+**Who:** Lead  **Branch/commit:** data/day1
+- **What changed:** `features.walk_features_v1` (exact copy of the old `gait_common.gait_features` logic, used only for this check), script `a2_04`, and test `test_legacy_equivalence.py`.
+- **Method:** run the new code in "old mode" (old debounce bug, ddof = 0, all walk types averaged per subject) and compare with:
+  1. `gait_common.detect_strides` on all 306 files, both feet;
+  2. the saved `results_new/gait_features_subject.csv` (read only; the protected-file guard was unchanged).
+- **Results (real run `day1_block4`):**
+  - Stride events: 306 files, 59,385 strides, **0 mismatches**.
+  - Features: **165/165 subjects**, all 13 features; largest difference 1.57e-11 (limit 1e-9); 0 NaN-pattern mismatches.
+  - **Gate: PASS.**
+- **Meaning:** the rewrite reproduces the old pipeline exactly. Every v1 → v2 difference is therefore a deliberate, documented change:
+  - `_01` walks only;
+  - debounce bug fixed;
+  - odd smoothing window (no effect at 100 Hz);
+  - ddof = 1;
+  - double support computed per stride.
+- Tests: 57 passed.
+- **Day 1 (Lead) complete.** Next: pull request `data/day1` → `main`; the teammate then uses `subject_v2.csv`.
+
+**In plain words**
+1. **We checked the new code against the old code.** We switched the new code into "old mode" and ran it on all 306 recordings.
+2. **The answers matched exactly:** every one of the 59,385 steps, and every number for all 165 people. The only difference was a rounding error 100,000 times smaller than our limit.
+3. **So the rewrite has no hidden mistakes.** Every difference between the old and new results comes from a fix we made on purpose and can explain.
+
+**Why it matters:** before anyone builds models on the new features, we've proven the code is correct. In the viva you can say exactly why the new numbers differ from the old ones, instead of "the numbers changed".
 
 ### 2026-11-21 — Day 1 Block 3: v2 features, QC, cache, `subject_v2.csv` (T3, T5)
 **Who:** Lead  **Branch/commit:** data/day1

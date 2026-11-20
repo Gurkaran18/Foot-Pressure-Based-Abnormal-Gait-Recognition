@@ -39,6 +39,60 @@ def _ds_one_side(a: pd.DataFrame, b: pd.DataFrame) -> float:
     return float(np.mean(fr))
 
 
+V1_FEATURES = ["stride_time_mean", "stride_time_cv", "swing_time_cv", "stance_pct", "swing_pct",
+               "double_support_pct", "cadence", "asym_stride", "asym_swing", "asym_peak", "peak_force_L",
+               "peak_force_R", "peak_force_norm"]
+
+
+def walk_features_v1(strides_L, strides_R, fl, fr, fs: float, signal_cfg: dict) -> dict:
+    """Exact reproduction of gait_common.gait_features over the whole recording (legacy v1).
+
+    For the Block 4 equivalence check ONLY. Must be called with strides detected using
+    debounce_impl='legacy'. Reproduces legacy choices on purpose: ddof=0 CV, MIN_STRIDES=3,
+    whole-span double-support mask recomputed on the stride span (issue I4), mean(L+R) body proxy (I5).
+    """
+    from .signal import contact_mask
+    legacy_cfg = {**signal_cfg, "debounce_impl": "legacy"}
+    L = strides_L[strides_L["valid"]]
+    R = strides_R[strides_R["valid"]]
+    feats = dict.fromkeys(V1_FEATURES, np.nan)
+    feats["n_strides"] = int(len(L) + len(R))
+    if min(len(L), len(R)) < 3:
+        return feats
+
+    def cv0(x):
+        x = np.asarray(x, float)
+        return float(100 * np.std(x) / np.mean(x)) if len(x) >= 2 and np.mean(x) > 0 else np.nan
+
+    def asym(a, b):
+        return float(100 * abs(a - b) / (0.5 * (a + b))) if (a + b) > 0 else np.nan
+
+    stride = np.r_[L["stride_s"], R["stride_s"]]
+    stance_pct = 100 * np.r_[L["stance_s"] / L["stride_s"], R["stance_s"] / R["stride_s"]]
+    swing_L, swing_R = L["swing_s"].mean(), R["swing_s"].mean()
+    peak_L, peak_R = L["peak_n"].mean(), R["peak_n"].mean()
+    a = int(min(L["hs_idx"].min(), R["hs_idx"].min()))
+    b = int(max(L["next_hs_idx"].max(), R["next_hs_idx"].max()))
+    both = contact_mask(fl[a:b], fs, legacy_cfg) & contact_mask(fr[a:b], fs, legacy_cfg)
+    body = float(np.mean(fl[a:b] + fr[a:b]))
+    feats.update({
+        "stride_time_mean": float(stride.mean()),
+        "stride_time_cv": float(np.mean([cv0(L["stride_s"]), cv0(R["stride_s"])])),
+        "swing_time_cv": float(np.mean([cv0(L["swing_s"]), cv0(R["swing_s"])])),
+        "stance_pct": float(stance_pct.mean()),
+        "swing_pct": float(100 - stance_pct.mean()),
+        "double_support_pct": float(100 * both.mean()),
+        "cadence": float(120.0 / stride.mean()),
+        "asym_stride": asym(L["stride_s"].mean(), R["stride_s"].mean()),
+        "asym_swing": float(100 * abs(np.log(swing_R / swing_L))) if swing_L > 0 and swing_R > 0 else np.nan,
+        "asym_peak": asym(peak_L, peak_R),
+        "peak_force_L": float(peak_L),
+        "peak_force_R": float(peak_R),
+        "peak_force_norm": float(0.5 * (peak_L + peak_R) / body) if body > 0 else np.nan,
+    })
+    return feats
+
+
 def walk_features_v2(strides_L: pd.DataFrame, strides_R: pd.DataFrame, cfg: dict) -> dict:
     """T1-core + double_support_v2_pct + n_valid_L/R. cfg = `features` block of config/a2.yaml."""
     L = strides_L[strides_L["valid"]] if len(strides_L) else strides_L
