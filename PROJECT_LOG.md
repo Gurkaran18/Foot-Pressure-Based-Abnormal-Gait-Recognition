@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Skeleton done (data/day1); implementation in progress |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead Day 1 done: Blocks 1–4, legacy gate PASS, `subject_v2.csv` ready, 57 tests pass |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,111 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-21 — Day 1 Block 4: legacy equivalence gate PASSED
+**Who:** Lead  **Branch/commit:** data/day1
+- **What changed:** `features.walk_features_v1` (exact copy of the old `gait_common.gait_features` logic, used only for this check), script `a2_04`, and test `test_legacy_equivalence.py`.
+- **Method:** run the new code in "old mode" (old debounce bug, ddof = 0, all walk types averaged per subject) and compare with:
+  1. `gait_common.detect_strides` on all 306 files, both feet;
+  2. the saved `results_new/gait_features_subject.csv` (read only; the protected-file guard was unchanged).
+- **Results (real run `day1_block4`):**
+  - Stride events: 306 files, 59,385 strides, **0 mismatches**.
+  - Features: **165/165 subjects**, all 13 features; largest difference 1.57e-11 (limit 1e-9); 0 NaN-pattern mismatches.
+  - **Gate: PASS.**
+- **Meaning:** the rewrite reproduces the old pipeline exactly. Every v1 → v2 difference is therefore a deliberate, documented change:
+  - `_01` walks only;
+  - debounce bug fixed;
+  - odd smoothing window (no effect at 100 Hz);
+  - ddof = 1;
+  - double support computed per stride.
+- Tests: 57 passed.
+- **Day 1 (Lead) complete.** Next: pull request `data/day1` → `main`; the teammate then uses `subject_v2.csv`.
+
+**In plain words**
+1. **We checked the new code against the old code.** We switched the new code into "old mode" and ran it on all 306 recordings.
+2. **The answers matched exactly:** every one of the 59,385 steps, and every number for all 165 people. The only difference was a rounding error 100,000 times smaller than our limit.
+3. **So the rewrite has no hidden mistakes.** Every difference between the old and new results comes from a fix we made on purpose and can explain.
+
+**Why it matters:** before anyone builds models on the new features, we've proven the code is correct. In the viva you can say exactly why the new numbers differ from the old ones, instead of "the numbers changed".
+
+### 2026-11-21 — Day 1 Block 3: v2 features, QC, cache, `subject_v2.csv` (T3, T5)
+**Who:** Lead  **Branch/commit:** data/day1
+- **What changed:**
+  - Implemented `etx/features.py`: the 5 T1-core features plus `double_support_v2_pct`, using ddof = 1, valid strides only, and double support computed per stride.
+  - `etx/qc.py`: QC flags, minimum 10 valid strides per foot, and one row per subject from the `_01` walk.
+  - `etx/cache.py`: the cache key is built from the recordings and their hashes, the config blocks, the module source code and the schema version.
+  - Script `a2_03` and tests `test_features_cache.py` (T3, T5).
+- **Hand-off file for the teammate:** `outputs/<run_id>/features/subject_v2.csv`. Columns: `subject_id`, `label`, `study`, the 5 T1-core features, `double_support_v2_pct`, `n_valid_L`, `n_valid_R`, `qc_pass`, `qc_flags`, `source_recordings`.
+- **Two changes from spec §5 (for the teammate):**
+  1. `sex`, `age_y` and `speed_01_mps` are **not** included unless `a2_03 --demographics <demographics/clean.csv>` is given. They come from the teammate's `demographics` module and are joined on `subject_id`; the Lead's code never invents them.
+  2. Stride and walk tables are saved as CSV, not parquet, so no pyarrow dependency is needed.
+- **Results (real run `day1_block3`, cache key `e2f7d49555a9`):**
+  - 306 walks, 54,337 valid strides in total.
+  - `subject_v2`: 165 subjects (PD 93, control 72), all 165 pass QC; at least 31 valid strides per foot.
+  - The cache works: the second run is a cache hit.
+  - Feature means: stride 1.100 s, stride CV 2.56 %, swing CV 4.87 %, stance 62.06 %, swing asymmetry 3.66 %, double support 23.03 %.
+  - Descriptive single-feature AUC, v2 on `_01` vs the old all-walk values: swing CV 0.765 (0.778), stance 0.721 (0.723), swing asymmetry 0.706 (0.736), stride CV 0.678 (0.699), stride mean 0.567 (0.566), double support 0.715. No model was trained.
+- Tests: 56 passed.
+- Next: Block 4, v1 legacy check on all 306 files, then a pull request to `main`.
+
+**In plain words**
+1. **We turned the steps into 5 numbers per person.** These measure how long a stride takes, how uneven the stride and swing times are, how much of the stride the foot is on the ground, and how different the left and right swings are. People with Parkinson's tend to score higher on the uneven ones.
+2. **We made the hand-off file `subject_v2.csv`.** It has one row per person (165 people) and is the file Janak's models learn from.
+3. **We added a smart cache.** Results are reused only if the data, settings and code are exactly the same; if anything changes, they're recalculated automatically.
+
+**Why it matters:** this table is what every model in the project is trained and tested on. The features are clean (normal walks only), they still separate PD from healthy people about as well as before, and the same code will produce the same table for WearGait-PD.
+
+### 2026-11-21 — Day 1 Block 2: signal loading and stride events in seconds (T4)
+**Who:** Lead  **Branch/commit:** data/day1
+- **What changed:**
+  - Implemented `etx/signal.py` (load trial, sampling rate, smoothing and debounce in seconds, contact mask) and `etx/events.py` (heel strike / toe-off, stride table with `valid` and `invalid_reason`). `paths.load_config()` added.
+  - New tests in `test_signal_events.py`: T4 at 50/100/120/200 Hz, the debounce rule, invalid reasons, and a check against the old code on 11 real files.
+- **Two bugs found and fixed (v2):**
+  1. **Old debounce bug** in `gait_common._drop_short_runs`: it padded with `~True` / `~False` (Python ints −2 / −1), which creates false edges, so only one of its two clean-up passes ever works. If a walk starts in swing, short false contacts are never removed. v2 uses the corrected version. `debounce_impl: legacy` reproduces the bug exactly, for the Block 4 v1 check only.
+  2. **Even smoothing window:** 50 ms at 50 Hz is 2 samples, and an even window shifts events by half a sample (10 ms). v2 always uses an odd window (3/5/7/11 samples at 50/100/120/200 Hz). It stays 5 at 100 Hz, so gaitpdb is unaffected.
+- The sampling rate is now 1 / median time step: exactly 100 Hz on gaitpdb. The overall-rate formula gave 100.007 because of 2-decimal printing drift.
+- **Results (real run, 165 primary walks):**
+  - The debounce fix changes events in 23 of 165 walks.
+  - Valid strides: 30,094 (old) vs 30,086 (fixed).
+  - Largest change in a foot's mean stride time: 2.27 ms; average change −0.009 ms.
+  - With the legacy setting, the new code reproduces the old stride indices exactly on the sampled files.
+- Tests: 48 passed.
+- Next: Block 3, v2 features, QC, cache, and `subject_v2.csv` (T3, T5).
+
+**In plain words**
+1. **We taught the code to find steps in seconds, not "rows of data".** It now works the same whether a device records 50 or 200 times a second, which matters because WearGait-PD's insoles may not record at 100 Hz like gaitpdb.
+2. **We found a hidden bug in the old step-finder.** The part meant to remove tiny false "touches" of the foot only worked half the time. It's fixed in the new version; on gaitpdb the effect is tiny (23 walks change slightly, about 2 ms at most).
+3. **We fixed a small timing shift** that would have made steps look about 10 ms late on low-rate devices.
+
+**Why it matters:** if the step-finder behaved differently on WearGait-PD, any drop in accuracy could be a code artefact instead of a real difference between the datasets. Now the same code measures steps the same way on both.
+
+### 2026-11-21 — Block 1 in plain words
+**Who:** Lead  **Branch/commit:** data/day1
+- Plain-language summary of the 2026-11-20 Block 1 entry below. No code changed.
+
+In Block 1 we did three things:
+
+1. **Protected your old work.** Your existing results and scripts (`results_new/`, `main.py` and so on) can no longer be changed by the new code. If anything touches them, the run stops with an error.
+2. **Checked the data is genuine.** All 306 gaitpdb files were compared against PhysioNet's official fingerprints, and every one matches. So you're using exactly the public dataset, and anyone can reproduce your results.
+3. **Selected the right walks.** Of the 306 recordings, we keep only the normal walk (`_01`) of each of the 165 people. Dual-task and music-cued walks are excluded, because WearGait-PD has only normal walking. Mixing in other walk types would make the comparison unfair.
+
+The tests confirm all three work, and every count matches the official documentation.
+
+**Why it matters:** the model will now learn from clean, verified, comparable data, and nothing you've already done can be damaged.
+
+### 2026-11-20 — Day 1 Block 1: safety guard, walk-condition rules, manifest (T1, T2, T10)
+**Who:** Lead  **Branch/commit:** data/day1
+- Implemented `etx/paths.py`, `guards.py`, `conditions.py`, `manifest.py` and scripts `a2_00` (environment + protected snapshot) and `a2_01` (manifest).
+- The guard fingerprints 33 protected files (`results_new/`, `results_pd/`, `checkpoints_pd/`, the old scripts) before and after every run and every test session. `safe_write` refuses protected paths and the read-only gaitpdb folder.
+- Condition rules `c1`: only `_01` is primary. Any unknown walk code raises an error instead of slipping in.
+- **Results (real run, `GAITPDB_ROOT` = official PhysioNet download):**
+  - 306 recordings, 165 subjects; all 306 SHA-256 values match PhysioNet's `SHA256SUMS.txt`.
+  - Primary: 165 (Ga 47, Ju 54, Si 64; PD 93, control 72).
+  - Excluded: Ga `_02` 39, Ga `_10` 27, Ju `_02`–`_07` 75.
+  - All files are uniform 100 Hz.
+- **Fix during the block:** the first uniformity check flagged all 306 files. The time column is printed to 2 decimals, so accumulated rounding shows some steps as 0.0099 s. Replaced it with a half-sample check against an ideal grid, which still catches dropped samples (new tests for both cases).
+- Tests: 33 passed.
+- Next: Block 2, signal loading and stride events in seconds (T4).
 
 ### 2026-11-19 — Merge policy set; Janak joined
 **Who:** Lead  **Branch/commit:** data/day1 (PR #1)
