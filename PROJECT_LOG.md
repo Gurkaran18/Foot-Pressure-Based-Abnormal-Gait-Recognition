@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Blocks 1–2 done (manifest, signal/events; 48 tests pass). Block 3 (features, subject_v2.csv) next |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Blocks 1–3 done; `subject_v2.csv` ready (165 subjects, 56 tests pass). Block 4 (legacy check) next |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,33 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-21 — Day 1 Block 3: v2 features, QC, cache, `subject_v2.csv` (T3, T5)
+**Who:** Lead  **Branch/commit:** data/day1
+- **What changed:**
+  - Implemented `etx/features.py`: the 5 T1-core features plus `double_support_v2_pct`, using ddof = 1, valid strides only, and double support computed per stride.
+  - `etx/qc.py`: QC flags, minimum 10 valid strides per foot, and one row per subject from the `_01` walk.
+  - `etx/cache.py`: the cache key is built from the recordings and their hashes, the config blocks, the module source code and the schema version.
+  - Script `a2_03` and tests `test_features_cache.py` (T3, T5).
+- **Hand-off file for the teammate:** `outputs/<run_id>/features/subject_v2.csv`. Columns: `subject_id`, `label`, `study`, the 5 T1-core features, `double_support_v2_pct`, `n_valid_L`, `n_valid_R`, `qc_pass`, `qc_flags`, `source_recordings`.
+- **Two changes from spec §5 (for the teammate):**
+  1. `sex`, `age_y` and `speed_01_mps` are **not** included unless `a2_03 --demographics <demographics/clean.csv>` is given. They come from the teammate's `demographics` module and are joined on `subject_id`; the Lead's code never invents them.
+  2. Stride and walk tables are saved as CSV, not parquet, so no pyarrow dependency is needed.
+- **Results (real run `day1_block3`, cache key `e2f7d49555a9`):**
+  - 306 walks, 54,337 valid strides in total.
+  - `subject_v2`: 165 subjects (PD 93, control 72), all 165 pass QC; at least 31 valid strides per foot.
+  - The cache works: the second run is a cache hit.
+  - Feature means: stride 1.100 s, stride CV 2.56 %, swing CV 4.87 %, stance 62.06 %, swing asymmetry 3.66 %, double support 23.03 %.
+  - Descriptive single-feature AUC, v2 on `_01` vs the old all-walk values: swing CV 0.765 (0.778), stance 0.721 (0.723), swing asymmetry 0.706 (0.736), stride CV 0.678 (0.699), stride mean 0.567 (0.566), double support 0.715. No model was trained.
+- Tests: 56 passed.
+- Next: Block 4, v1 legacy check on all 306 files, then a pull request to `main`.
+
+**In plain words**
+1. **We turned the steps into 5 numbers per person.** These measure how long a stride takes, how uneven the stride and swing times are, how much of the stride the foot is on the ground, and how different the left and right swings are. People with Parkinson's tend to score higher on the uneven ones.
+2. **We made the hand-off file `subject_v2.csv`.** It has one row per person (165 people) and is the file Janak's models learn from.
+3. **We added a smart cache.** Results are reused only if the data, settings and code are exactly the same; if anything changes, they're recalculated automatically.
+
+**Why it matters:** this table is what every model in the project is trained and tested on. The features are clean (normal walks only), they still separate PD from healthy people about as well as before, and the same code will produce the same table for WearGait-PD.
 
 ### 2026-11-21 — Day 1 Block 2: signal loading and stride events in seconds (T4)
 **Who:** Lead  **Branch/commit:** data/day1
