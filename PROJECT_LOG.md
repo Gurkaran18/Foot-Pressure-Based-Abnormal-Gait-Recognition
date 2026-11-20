@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Skeleton done (data/day1); implementation in progress |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Block 1 done (guard, manifest, conditions; 33 tests pass). Block 2 (signal/events) next |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,20 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-20 — Day 1 Block 1: safety guard, walk-condition rules, manifest (T1, T2, T10)
+**Who:** Lead  **Branch/commit:** data/day1
+- Implemented `etx/paths.py`, `guards.py`, `conditions.py`, `manifest.py` and scripts `a2_00` (environment + protected snapshot) and `a2_01` (manifest).
+- The guard fingerprints 33 protected files (`results_new/`, `results_pd/`, `checkpoints_pd/`, the old scripts) before and after every run and every test session. `safe_write` refuses protected paths and the read-only gaitpdb folder.
+- Condition rules `c1`: only `_01` is primary. Any unknown walk code raises an error instead of slipping in.
+- **Results (real run, `GAITPDB_ROOT` = official PhysioNet download):**
+  - 306 recordings, 165 subjects; all 306 SHA-256 values match PhysioNet's `SHA256SUMS.txt`.
+  - Primary: 165 (Ga 47, Ju 54, Si 64; PD 93, control 72).
+  - Excluded: Ga `_02` 39, Ga `_10` 27, Ju `_02`–`_07` 75.
+  - All files are uniform 100 Hz.
+- **Fix during the block:** the first uniformity check flagged all 306 files. The time column is printed to 2 decimals, so accumulated rounding shows some steps as 0.0099 s. Replaced it with a half-sample check against an ideal grid, which still catches dropped samples (new tests for both cases).
+- Tests: 33 passed.
+- Next: Block 2, signal loading and stride events in seconds (T4).
 
 ### 2026-11-19 — Merge policy set; Janak joined
 **Who:** Lead  **Branch/commit:** data/day1 (PR #1)
