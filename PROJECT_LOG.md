@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead Day 1 done: Blocks 1–4, legacy gate PASS, `subject_v2.csv` ready, 57 tests pass |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead Day 1 done incl. K-curve/emulation samplers (63 tests pass); waiting for teammate models + E8–E9 evaluation |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,28 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-21 — Day 1 leftovers: K-curve and emulation samplers
+**Who:** Lead  **Branch/commit:** data/day1-samplers
+- **What changed:**
+  - `etx/kcurve.py`: S1 contiguous / S2 random sampling of K strides per foot, deterministic seeds per (scheme, K, draw), K-stride feature tables and eligibility counts.
+  - `etx/emulation.py`: pseudo-SelfPace walks of 4 segments × 6–7 consecutive valid strides; turn-adjacent strides dropped; segments never adjacent.
+  - Scripts `a2_08` and `a2_09`, which build the tables. The `evaluate()` stubs stay for the teammate.
+  - Tests in `test_kcurve_emulation.py`.
+- **Results (real run `day1_samplers`):**
+  - K-curve tables: 39,930 rows (2 schemes × K = 5, 8, 10, 15, 20, 25, all × 20 draws × 165 subjects). **All 165 subjects are eligible at every K**, including K = 25 (the minimum is 31 valid strides per foot).
+  - Emulation tables: 3,180 rows (20 draws), with 159–161 of 165 eligible per draw. **4 subjects are never eligible: JuCo02, JuCo03, JuPt05, JuPt08** (2 control, 2 PD), and 5 more are eligible only in some draws (mostly Ju). Their walks break into turn-free stretches too short for 4 segments. The exclusions are balanced across labels, which is the limitation to report.
+  - Speed-up: S1 start selection vectorised, cutting the K-curve run from 4 min 42 s to 1 min 41 s with byte-identical output.
+  - The cache key changed after the Block 4 edit of `features.py` (recomputed automatically, as T3 intends).
+- Tests: 63 passed.
+- **Next:** the teammate implements `kcurve.evaluate` / `emulation.evaluate` (E8–E9 gates). The Lead registers on Synapse and starts the WearGait-PD download.
+
+**In plain words**
+1. **We built a "short walk" simulator.** gaitpdb walks are long (2 minutes); WearGait-PD walks are 4 short passes over a small walkway. The code cuts gaitpdb walks down to 5, 10, 20… strides, or into 4 WearGait-style passes, and recomputes the 5 features.
+2. **It works for almost everyone.** All 165 people can be cut to any length up to 25 strides. The 4-pass version works for about 160 of 165 per try; 4 people from one study (half PD, half healthy) have walks that are too broken up.
+3. **Janak's evaluation will use these tables** to measure how much accuracy drops when walks are short.
+
+**Why it matters:** if the model does worse on WearGait-PD, we need to know whether that's just because the walks are shorter. This simulator lets us measure that effect on gaitpdb first, so it isn't confused with real differences between the datasets.
 
 ### 2026-11-21 — Day 1 Block 4: legacy equivalence gate PASSED
 **Who:** Lead  **Branch/commit:** data/day1
