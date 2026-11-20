@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Block 1 done (guard, manifest, conditions; 33 tests pass). Block 2 (signal/events) next |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Blocks 1–2 done (manifest, signal/events; 48 tests pass). Block 3 (features, subject_v2.csv) next |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,30 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-21 — Day 1 Block 2: signal loading and stride events in seconds (T4)
+**Who:** Lead  **Branch/commit:** data/day1
+- **What changed:**
+  - Implemented `etx/signal.py` (load trial, sampling rate, smoothing and debounce in seconds, contact mask) and `etx/events.py` (heel strike / toe-off, stride table with `valid` and `invalid_reason`). `paths.load_config()` added.
+  - New tests in `test_signal_events.py`: T4 at 50/100/120/200 Hz, the debounce rule, invalid reasons, and a check against the old code on 11 real files.
+- **Two bugs found and fixed (v2):**
+  1. **Old debounce bug** in `gait_common._drop_short_runs`: it padded with `~True` / `~False` (Python ints −2 / −1), which creates false edges, so only one of its two clean-up passes ever works. If a walk starts in swing, short false contacts are never removed. v2 uses the corrected version. `debounce_impl: legacy` reproduces the bug exactly, for the Block 4 v1 check only.
+  2. **Even smoothing window:** 50 ms at 50 Hz is 2 samples, and an even window shifts events by half a sample (10 ms). v2 always uses an odd window (3/5/7/11 samples at 50/100/120/200 Hz). It stays 5 at 100 Hz, so gaitpdb is unaffected.
+- The sampling rate is now 1 / median time step: exactly 100 Hz on gaitpdb. The overall-rate formula gave 100.007 because of 2-decimal printing drift.
+- **Results (real run, 165 primary walks):**
+  - The debounce fix changes events in 23 of 165 walks.
+  - Valid strides: 30,094 (old) vs 30,086 (fixed).
+  - Largest change in a foot's mean stride time: 2.27 ms; average change −0.009 ms.
+  - With the legacy setting, the new code reproduces the old stride indices exactly on the sampled files.
+- Tests: 48 passed.
+- Next: Block 3, v2 features, QC, cache, and `subject_v2.csv` (T3, T5).
+
+**In plain words**
+1. **We taught the code to find steps in seconds, not "rows of data".** It now works the same whether a device records 50 or 200 times a second, which matters because WearGait-PD's insoles may not record at 100 Hz like gaitpdb.
+2. **We found a hidden bug in the old step-finder.** The part meant to remove tiny false "touches" of the foot only worked half the time. It's fixed in the new version; on gaitpdb the effect is tiny (23 walks change slightly, about 2 ms at most).
+3. **We fixed a small timing shift** that would have made steps look about 10 ms late on low-rate devices.
+
+**Why it matters:** if the step-finder behaved differently on WearGait-PD, any drop in accuracy could be a code artefact instead of a real difference between the datasets. Now the same code measures steps the same way on both.
 
 ### 2026-11-21 — Block 1 in plain words
 **Who:** Lead  **Branch/commit:** data/day1

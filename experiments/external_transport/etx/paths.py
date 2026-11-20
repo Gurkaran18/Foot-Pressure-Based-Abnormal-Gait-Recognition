@@ -35,5 +35,12 @@ def outputs_root(run_id: str) -> Path:
     return out
 
 
+def load_config(path=CONFIG_PATH) -> dict:
+    """Parse config/a2.yaml (the ${GAITPDB_ROOT} placeholder is left as text; use gaitpdb_root())."""
+    import yaml
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
 def protected_abs_paths(repo_root: Path = REPO_ROOT, names=PROTECTED_PATHS):
     return [(Path(repo_root) / n).resolve() for n in names]
