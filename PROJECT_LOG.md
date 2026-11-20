@@ -43,6 +43,20 @@ This is the shared record of everything changed or decided in this project. **Bo
 
 ## Log entries
 
+### 2026-11-21 — Block 1 in plain words
+**Who:** Lead  **Branch/commit:** data/day1
+- Plain-language summary of the 2026-11-20 Block 1 entry below. No code changed.
+
+In Block 1 we did three things:
+
+1. **Protected your old work.** Your existing results and scripts (`results_new/`, `main.py` and so on) can no longer be changed by the new code. If anything touches them, the run stops with an error.
+2. **Checked the data is genuine.** All 306 gaitpdb files were compared against PhysioNet's official fingerprints, and every one matches. So you're using exactly the public dataset, and anyone can reproduce your results.
+3. **Selected the right walks.** Of the 306 recordings, we keep only the normal walk (`_01`) of each of the 165 people. Dual-task and music-cued walks are excluded, because WearGait-PD has only normal walking. Mixing in other walk types would make the comparison unfair.
+
+The tests confirm all three work, and every count matches the official documentation.
+
+**Why it matters:** the model will now learn from clean, verified, comparable data, and nothing you've already done can be damaged.
+
 ### 2026-11-20 — Day 1 Block 1: safety guard, walk-condition rules, manifest (T1, T2, T10)
 **Who:** Lead  **Branch/commit:** data/day1
 - Implemented `etx/paths.py`, `guards.py`, `conditions.py`, `manifest.py` and scripts `a2_00` (environment + protected snapshot) and `a2_01` (manifest).
