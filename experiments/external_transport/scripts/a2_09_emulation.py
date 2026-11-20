@@ -1,11 +1,38 @@
-"""E9: protocol emulation (gate).
+"""E9: emulation — Lead builds the feature tables; Teammate's emulation.evaluate() scores them (gate).
 
-Owner: Lead + Teammate. Run from repo root:  python -m experiments.external_transport.scripts.a2_09_emulation
+Run from repo root (after a2_03 for the same run id):
+    GAITPDB_ROOT=... python -m experiments.external_transport.scripts.a2_09_emulation --run-id <id>
+Reads  outputs/<id>/events/strides.csv and features/subject_v2.csv
+Writes outputs/<id>/emulation/feature_tables.csv and eligibility.csv
 """
+import argparse
+
+import pandas as pd
+
+from experiments.external_transport.etx import emulation, guards, paths
 
 
-def main():
-    raise NotImplementedError
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run-id", required=True)
+    args = ap.parse_args(argv)
+    run = paths.outputs_root(args.run_id)
+    cfg = paths.load_config()
+
+    before = guards.snapshot()
+    strides = pd.read_csv(run / "events" / "strides.csv")
+    subjects = pd.read_csv(run / "features" / "subject_v2.csv")
+    feats, elig = emulation.feature_tables(strides, subjects, cfg)
+    guards.safe_write(run / "emulation" / "feature_tables.csv", feats.to_csv(index=False))
+    guards.safe_write(run / "emulation" / "eligibility.csv", elig.to_csv(index=False))
+    print(f"[E9] emulation feature tables: {len(feats)} rows -> {run / 'emulation'}")
+    print(elig.groupby([c for c in ("scheme", "K") if c in elig.columns] or ["draw"])
+              [["n_eligible_Co", "n_eligible_PD"]].min().to_string())
+    try:
+        emulation.evaluate(feats, cfg)
+    except NotImplementedError:
+        print("     evaluation: not implemented yet (Teammate: emulation.evaluate)")
+    guards.verify(before)
 
 
 if __name__ == "__main__":
