@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PKG_ROOT = REPO_ROOT / "experiments" / "external_transport"
 CONFIG_PATH = PKG_ROOT / "config" / "a2.yaml"
 OUTPUTS_DIR = PKG_ROOT / "outputs"
+LABELS_DIR = REPO_ROOT / "labels"          # git-ignored; WearGait-PD diagnosis key. Never read before `model-frozen`.
 
 # Existing results and scripts that A2 must never modify (CLAUDE.md §4).
 PROTECTED_PATHS = ["results_new", "results_pd", "checkpoints_pd", "main.py", "gait_common.py",
@@ -23,6 +24,18 @@ def gaitpdb_root() -> Path:
     root = Path(val).expanduser().resolve()
     if not root.is_dir():
         raise RuntimeError(f"GAITPDB_ROOT does not exist: {root}")
+    return root
+
+
+def weargait_root(create: bool = False) -> Path:
+    """$WEARGAIT_ROOT (default ~/Downloads/weargait-pd). Must be outside the repo (licence: no re-upload)."""
+    root = Path(os.environ.get("WEARGAIT_ROOT", "~/Downloads/weargait-pd")).expanduser().resolve()
+    if root == REPO_ROOT or REPO_ROOT in root.parents:
+        raise RuntimeError(f"WEARGAIT_ROOT must be outside the repo: {root}")
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    elif not root.is_dir():
+        raise RuntimeError(f"WEARGAIT_ROOT does not exist: {root} (run b_01_weargait_download.py first)")
     return root
 
 

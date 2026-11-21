@@ -29,8 +29,8 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: structure surveyed, download + blinding next (Lead) |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: downloaded + blinded (123 subjects, 367 SelfPace files); label-free exploration next (Lead) |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B started 2026-11-22: B1 download + blinding done |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,28 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-22 — B1: WearGait-PD downloaded and blinded
+**Who:** Lead  **Branch/commit:** data/weargait-blind
+- **New:** `etx/weargait_blind.py` (file selection, random `WG###` codes from OS randomness, group-free names, leak check), `scripts/b_01_weargait_download.py`, `tests/test_weargait_blind.py` (4 tests). `etx/paths.py`: `LABELS_DIR`, `weargait_root()` (`$WEARGAIT_ROOT`, default `~/Downloads/weargait-pd`; refuses any path inside the repo).
+- **Run:**
+  - 123 subjects and 367 files downloaded (SelfPace 123, SelfPace_mat 123, SelfPace_matTURN 121), 5.2 GB, into `$WEARGAIT_ROOT/blinded/`, read-only, plus `manifest.csv` (code, task, sha256, bytes).
+  - Leak check: 0 files with a group string in their first 20 lines.
+  - Key → `labels/weargait_key.csv`, git-ignored and checked with `git check-ignore`.
+  - Demographics (2 group-split files) and the PKMAS walkway metrics → `_restricted/`. 100 tests pass.
+- **Findings from headers only:**
+  - PKMAS has `Velocity (cm./sec.)` per Task. Walkway speed therefore exists, so the H2 precondition (D6/D13) can be checked; the speed overlap is still to be measured.
+  - PKMAS also has a `PD vs Control` column, so it must go through an allow-list (code, task, velocity) before use.
+  - The demographics files have multi-row headers (`Unnamed:` / `-` columns) and MDS-UPDRS items. They need a careful allow-list (age, sex only) when blinded.
+- **Caveat:** `synapseclient` printed the original file names during download, despite `silent=True`. These went only to a local scratch log, never with codes, so the code-to-group mapping is not exposed. Fix the logging if the script is ever rerun.
+- **Next:** label-free exploration of `blinded/` (format, sampling rate, units, insole channels, strides per pass, what the `_mat` files contain).
+
+**In plain words**
+1. We downloaded the WearGait-PD walking data: 123 people, 3 files each.
+2. Every file got a random code like `WG042`, so nobody can tell from the file who has Parkinson's. The "who is who" key is locked in `labels/`.
+3. Good news: the dataset has walking speed from the walkway, which we need for our speed-adjusted test (H2).
+
+**Why it matters:** the external test stays honest because nobody can see the diagnoses until the model is frozen.
 
 ### 2026-11-21 — WearGait-PD loader moved to Lead; dataset structure surveyed
 **Who:** Lead  **Branch/commit:** main
