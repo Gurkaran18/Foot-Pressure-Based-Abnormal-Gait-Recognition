@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead Day 1 done incl. K-curve/emulation samplers (63 tests pass); waiting for teammate models + E8–E9 evaluation |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation, WearGait-PD download |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,33 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-21 — Lead review of PR #4: approved and merged
+**Who:** Lead  **Branch/commit:** main, `0daa1b1`
+- First review (request changes) found 4 blocking issues:
+  1. the R8 weighting rule chose by AUC;
+  2. the speed-adjusted AUC used the wrong estimator (gave 0.850 instead of 0.806 in an independence demo);
+  3. inner-CV seeds came from Python `hash()`, so they changed on every run;
+  4. `bootstrap_cv` failed silently on duplicated subjects.
+  Plus 5 smaller items.
+- The teammate fixed all of them in `168a1aa`. The Lead re-verified the demos (AAUC = 0.806 when speed is irrelevant; ≈ 0.5 when the score is only speed; seeds deterministic; bootstrap draws succeed). 96 tests pass on `main` after the merge.
+- **Accepted internal results (E5–E7):**
+  - R8 chooses unweighted (threshold 0.564).
+  - M1 AUC 0.824 (bootstrap-of-CV CI 0.726–0.880), calibration slope 1.01.
+  - X1 (XGBoost) AUC 0.859, slope 0.70 (overconfident).
+  - Leave-one-study-out mean 0.785.
+- **Follow-ups for the teammate before the freeze:**
+  1. `demographics` + `a2_02`, so the internal speed-adjusted AUC gate and the M0/M2/AS models can run;
+  2. bootstrap-of-CV with inner C selection and B = 500;
+  3. inner C selection for the Ga+Ju analysis;
+  4. E8–E9 evaluation.
+
+**In plain words**
+1. **Janak's model code had 4 serious bugs**, including a wrong formula for one of our main hypotheses and results that changed every run. He fixed all of them, and we checked each fix ourselves.
+2. **The main model reaches AUC 0.82 on gaitpdb:** it ranks a PD patient above a healthy person 82% of the time. It's also well calibrated: its probabilities can be trusted.
+3. **Before the freeze he still needs to add demographics** (speed, age, sex) and the short-walk evaluation.
+
+**Why it matters:** these numbers are the internal baseline that WearGait-PD will be compared against, so they had to be correct and reproducible.
 
 ### 2026-11-21 — Teammate Day 1 PR #4 Lead Review Fixes (R8 weighting, Janes & Pepe AAUC, bootstrap_cv, calibration)
 **Who:** Teammate (Janak Varshney)  **Branch/commit:** model/day1
