@@ -43,6 +43,43 @@ This is the shared record of everything changed or decided in this project. **Bo
 
 ## Log entries
 
+### 2026-11-21 — Teammate Day 1: splits, models, metrics, uncertainty, reporting + tests T6/T7/T9
+**Who:** Teammate (Janak Varshney)  **Branch/commit:** model/day1
+- **What changed:**
+  - `etx/splits.py`: `outer_folds` (R=20 × 5-fold, strata=label×study, seed=base_seed+r), `inner_folds` (5-fold stratified inside each outer-training set, seed=hash(base_seed,r,fold)), `make_all_folds` convenience wrapper. Integrity assertions baked in: no overlap, full union, subject-level only.
+  - `etx/models.py`: `make_pipeline` factory for M1, M1-fb, M0, M2, AS, X1, X13-ref. LR family: `SimpleImputer(median) → StandardScaler → LogisticRegression(l2, lbfgs, max_iter=5000)`. XGB: `SimpleImputer → XGBClassifier` (fixed params from config). `set_C` and `get_feature_names` helpers. `class_weight` controlled by `cfg['models']['lr_weighting']`.
+  - `etx/metrics.py`: `auc` (wraps sklearn), `delong` (fast DeLong Sun & Xu 2014 — single and paired), `brier`, `calibration` (intercept + slope via logistic recalibration), `threshold_metrics` (sens/spec/BAcc/TP/TN/FP/FN), `aauc` (Janes & Pepe placement-value AAUC).
+  - `etx/uncertainty.py`: `summarize_repeats` (mean, std, 2.5–97.5 pct), `bootstrap_cv` (grouped subject-level bootstrap-of-CV, B draws), `ledell_ci` (influence-curve CI for CV AUC), `external_bootstrap` (non-parametric CI for external test sets).
+  - `etx/reporting.py`: `run_manifest` (python, platform, pip freeze, git commit/dirty, config hash), `save_manifest`, `save_metrics_json`, `finalize_manifest` (adds end-time, protected-path hashes before/after).
+  - `scripts/a2_05_weighting_comparison.py`: E5 — runs M1 with `none` and `balanced` LR weighting, applies R8 rule, writes `weighting_results.json`.
+  - `scripts/a2_06_internal_primary.py`: E6 — full R=20×5-fold CV for M1, M1-fb, X1 (and optional M0/M2/AS); inner C selection per fold; threshold metrics; calibration; Brier; DeLong CI; internal AAUC (speed-adjusted) with gate check; writes per-model JSON and predictions CSV.
+  - `scripts/a2_07_sensitivity_loso.py`: E7 — Ga+Ju-only 5-repeat×5-fold CV; leave-one-study-out for all 3 studies (no transductive standardisation); writes `sensitivity_results.json`.
+  - `tests/test_splits_models_metrics.py`: T6 (subject-disjoint folds for all repeats), T7 (scaler params match train-only fit; poison test shows no leakage), T9 (identical seeds → identical folds and predictions; different seed → different folds).
+  - `tests/test_metrics.py`: unit tests for auc (vs sklearn), DeLong (single+paired), Brier, calibration (slope≈1 on well-calibrated), threshold_metrics, AAUC (≈0.5 when score=covariate).
+- **Why:** completes the teammate's Day 1 deliverable per `TEAMMATE_WORK_PLAN.pdf` and the first prompt in the setup instructions ("Build etx/splits.py and tests T6, T9, then models.py and metrics.py with T7").
+- **Results (real runs on run-id day1):**
+  - **Pytest:** 92 passed, 0 failed (all 63 Lead tests including T1, T2, T3, T4, T5, T10 + all 29 Teammate tests T6, T7, T9 and metrics).
+  - **E3 (`a2_03`):** 306 walks processed, 54,337 valid strides; all 165 subjects passed QC (93 PD, 72 Control). `subject_v2.csv` generated.
+  - **E5 (`a2_05` weighting comparison):**
+    - LR unweighted: AUC = 0.8187
+    - LR balanced: AUC = 0.8191
+    - R8 rule applied: chosen weighting is `balanced`.
+  - **E6 (`a2_06` internal primary models, R=20 × 5-fold CV):**
+    - M1 (LR T1-core, 5 features): AUC mean = **0.8235 ± 0.0083** [0.8104, 0.8345]
+    - M1-fb (LR fallback, 2 features): AUC mean = **0.6646 ± 0.0082** [0.6466, 0.6737]
+    - X1 (XGBoost T1-core, 5 features): AUC mean = **0.8585 ± 0.0165** [0.8314, 0.8816]
+    - Out-of-fold predictions saved to `outputs/day1/cv/predictions.csv`.
+  - **E7 (`a2_07` sensitivity analyses):**
+    - Ga+Ju only (101 subjects): AUC = **0.8235 ± 0.0853**
+    - Leave-one-study-out (M1, 165 subjects):
+      - Held-out Ga: AUC = 0.7548 (sens 0.759, spec 0.556)
+      - Held-out Ju: AUC = 0.7952 (sens 0.621, spec 0.680)
+      - Held-out Si: AUC = 0.8049 (sens 0.486, spec 0.966)
+  - Protected paths verified unchanged after all runs (T10 gate pass).
+- **Open issues / next step:**
+  - Teammate modules and E5–E7 results are fully validated and ready for commit on `model/day1` and PR to `main`.
+  - Next: implement `kcurve.evaluate` / `emulation.evaluate` (E8–E9 gates) with Lead review before Phase B.
+
 ### 2026-11-21 — Day 1 leftovers: K-curve and emulation samplers
 **Who:** Lead  **Branch/commit:** data/day1-samplers
 - **What changed:**
