@@ -74,7 +74,6 @@ def make_pipeline(model_id: str, cfg: dict, seed: int = 42) -> Pipeline:
             raise ImportError("xgboost is required for X1 / X13-ref models. pip install xgboost")
         xgb_params = dict(cfg["models"].get("xgb_t1", {}))
         xgb_params["random_state"] = seed
-        xgb_params["use_label_encoder"] = False
         xgb_params["eval_metric"] = "logloss"
         clf = XGBClassifier(**xgb_params)
         return Pipeline([

@@ -264,3 +264,50 @@ class TestT9Determinism:
 
         np.testing.assert_array_equal(prob_a, prob_b,
                                       err_msg="Same seed XGBoost gave different predictions")
+
+
+# ===========================================================================
+# Bootstrap-of-CV and LeDell IC Tests (Spec R5)
+# ===========================================================================
+
+class TestUncertainty:
+    """Participant-level uncertainty methods."""
+
+    def test_bootstrap_cv_groups_duplicates_into_same_fold(self):
+        from experiments.external_transport.etx import uncertainty
+
+        observed_fold_assignments = []
+
+        def spy_cv(boot_df, fold_splits):
+            # Check every subject with multiple occurrences: all must have the same fold
+            for sid, group in boot_df.groupby("subject_id"):
+                folds = group["fold"].unique()
+                assert len(folds) == 1, f"Subject {sid} appears in multiple folds: {folds}"
+            observed_fold_assignments.append(len(boot_df))
+            return 0.80
+
+        res = uncertainty.bootstrap_cv(spy_cv, SUBJECTS, B=10, seed=42, k=3)
+        assert res["n_valid_draws"] == 10
+        assert res["mean"] == pytest.approx(0.80)
+        assert len(observed_fold_assignments) == 10
+
+    def test_bootstrap_cv_fails_loudly_on_error(self):
+        from experiments.external_transport.etx import uncertainty
+
+        def failing_cv(boot_df, fold_splits):
+            raise ValueError("Deliberate failure in CV callback")
+
+        with pytest.raises(ValueError, match="Deliberate failure in CV callback"):
+            uncertainty.bootstrap_cv(failing_cv, SUBJECTS, B=2, seed=42)
+
+    def test_ledell_ci_positive_variance_and_bounds(self):
+        from experiments.external_transport.etx import uncertainty
+        rng = np.random.default_rng(123)
+        y = rng.integers(0, 2, 100)
+        p = np.clip(0.3 * y + rng.uniform(0.1, 0.6, 100), 0, 1)
+
+        res = uncertainty.ledell_ci(y, p)
+        assert res["se"] > 0
+        assert res["ci_lower"] < res["auc"] < res["ci_upper"]
+        assert 0.0 <= res["auc"] <= 1.0
+

@@ -45,7 +45,7 @@ def test_delong_variance_positive():
 
 def test_delong_paired_same_model():
     y, p = _make_data()
-    result = delong(y, p, p)  # identical models → delta=0
+    result = delong(y, p, p)  # identical models -> delta=0
     assert result["delta_auc"] == pytest.approx(0.0, abs=1e-10)
     assert result["p_value"] == pytest.approx(1.0, abs=0.01)
 
@@ -85,7 +85,7 @@ def test_calibration_well_calibrated():
     p = rng.uniform(0.1, 0.9, 500)
     y = rng.binomial(1, p)
     cal = calibration(y, p)
-    assert abs(cal["intercept"]) < 0.5, "Intercept far from 0 on well-calibrated data"
+    assert abs(cal["intercept"]) < 0.5, "Intercept with offset far from 0 on well-calibrated data"
     assert abs(cal["slope"] - 1.0) < 0.5, "Slope far from 1 on well-calibrated data"
 
 
@@ -124,25 +124,41 @@ def test_threshold_counts():
     assert m["tp"] == 1 and m["fp"] == 1 and m["tn"] == 1 and m["fn"] == 1
 
 
-# --- AAUC ---
+# --- AAUC (Janes & Pepe) ---
+
+def test_aauc_score_independent_of_speed_matches_plain_auc():
+    """When score is independent of speed, AAUC ≈ plain AUC."""
+    rng = np.random.default_rng(42)
+    n = 300
+    y = rng.integers(0, 2, n)
+    # Score has genuine discrimination
+    score = rng.normal(0, 1, n) + 1.2 * y
+    # Speed is completely independent noise
+    speed = rng.normal(1.0, 0.2, n)
+
+    plain_auc = roc_auc_score(y, score)
+    res = aauc(y, score, speed, B=200, seed=42)
+
+    assert abs(res["aauc"] - plain_auc) < 0.03, \
+        f"AAUC ({res['aauc']:.4f}) does not match plain AUC ({plain_auc:.4f}) when independent"
+
 
 def test_aauc_covariate_only_is_half():
-    """AAUC ≈ 0.5 when the score depends only on the covariate (spec test)."""
+    """AAUC ≈ 0.5 when the score depends ONLY on the covariate (no independent marker signal)."""
     rng = np.random.default_rng(99)
-    n = 200
-    cov = rng.uniform(0, 1, n)
+    n = 300
+    speed = rng.uniform(0.5, 1.5, n)
     y = rng.integers(0, 2, n)
-    # Score = covariate + noise; diagnosis independent of score after adjusting for cov
-    score = cov + rng.normal(0, 0.01, n)
-    result = aauc(y, score, cov)
-    # After full adjustment for covariate, AAUC should be near 0.5
-    assert abs(result["aauc"] - 0.5) < 0.15, \
-        f"AAUC not near 0.5 when score = covariate: {result['aauc']:.3f}"
+    # Score is purely a function of speed + tiny noise; independent of y given speed
+    score = 2.0 * speed + rng.normal(0, 0.01, n)
+    res = aauc(y, score, speed, B=200, seed=99)
+    assert abs(res["aauc"] - 0.5) < 0.08, \
+        f"AAUC not near 0.5 when score depends only on covariate: {res['aauc']:.3f}"
 
 
 def test_aauc_returns_finite():
     y, p = _make_data()
     cov = np.random.default_rng(5).uniform(0.5, 1.5, len(y))
-    result = aauc(y, p, cov)
+    result = aauc(y, p, cov, B=100)
     assert np.isfinite(result["aauc"])
     assert result["ci_lower"] < result["aauc"] < result["ci_upper"]

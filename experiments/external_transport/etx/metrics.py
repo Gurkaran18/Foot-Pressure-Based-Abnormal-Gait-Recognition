@@ -4,7 +4,8 @@ Owner: Teammate (model/*). Spec: research/protocol/A2_IMPLEMENTATION_SPEC.md §4
 """
 import numpy as np
 from sklearn.metrics import roc_auc_score
-from scipy import stats
+from sklearn.linear_model import LogisticRegression
+from scipy import stats, optimize
 
 
 # ---------------------------------------------------------------------------
@@ -142,26 +143,47 @@ def brier(y: np.ndarray, p: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 def calibration(y: np.ndarray, p: np.ndarray) -> dict:
-    """Logistic recalibration: fit intercept and slope with model logit as offset.
+    """Logistic recalibration:
+    - Intercept: fitted with model logit as an offset (slope fixed to 1).
+      Solves sum(y - 1 / (1 + exp(-(alpha + logit)))) = 0.
+    - Slope: fitted separately via unconstrained logistic regression y ~ logit.
 
     Returns {intercept, slope}.
     A well-calibrated model has intercept ≈ 0 and slope ≈ 1.
     """
-    from sklearn.linear_model import LogisticRegression
-
     y = np.asarray(y, int)
     p = np.asarray(p, float)
-    # Clip to avoid log(0)
-    p = np.clip(p, 1e-6, 1 - 1e-6)
-    logit = np.log(p / (1 - p))
+    p = np.clip(p, 1e-6, 1.0 - 1e-6)
+    logit = np.log(p / (1.0 - p))
 
-    # Intercept-only model (slope = 1 forced as offset): calibration-in-the-large
-    # Then full model: logit as single feature
+    # 1. Calibration-in-the-large: intercept with logit as offset (slope fixed to 1)
+    def _score(alpha):
+        p_adj = 1.0 / (1.0 + np.exp(-(alpha + logit)))
+        return np.sum(y - p_adj)
+
+    # Bracket search for root
+    lo, hi = -10.0, 10.0
+    while _score(lo) < 0:
+        lo -= 10.0
+    while _score(hi) > 0:
+        hi += 10.0
+
+    try:
+        intercept = float(optimize.brentq(_score, lo, hi))
+    except Exception:
+        # Fallback to optimization if root finding fails
+        def _nll(alpha):
+            p_adj = np.clip(1.0 / (1.0 + np.exp(-(alpha + logit))), 1e-15, 1.0 - 1e-15)
+            return -np.sum(y * np.log(p_adj) + (1 - y) * np.log(1 - p_adj))
+        res = optimize.minimize_scalar(_nll, bounds=(lo, hi), method="bounded")
+        intercept = float(res.x)
+
+    # 2. Calibration slope from separate unconstrained fit y ~ logit
     X = logit.reshape(-1, 1)
     lr = LogisticRegression(penalty=None, solver="lbfgs", max_iter=5000)
     lr.fit(X, y)
     slope = float(lr.coef_[0, 0])
-    intercept = float(lr.intercept_[0])
+
     return {"intercept": intercept, "slope": slope}
 
 
@@ -193,21 +215,79 @@ def threshold_metrics(y: np.ndarray, p: np.ndarray, thr: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# AAUC: adjusted AUC (Janes & Pepe)
+# AAUC: Janes & Pepe Covariate-Adjusted AUC
 # ---------------------------------------------------------------------------
+
+def _compute_aauc_point(y: np.ndarray, score: np.ndarray, covariate: np.ndarray, strata: np.ndarray) -> float:
+    """Within each study/stratum: model score ~ speed in CONTROLS (linear),
+    standardise residuals, case placement value = share of control residuals
+    below the case residual; AAUC = mean over cases.
+    """
+    case_placement_values = []
+
+    unique_strata = np.unique(strata)
+    for s in unique_strata:
+        mask_s = strata == s
+        ctrl_mask = mask_s & (y == 0)
+        case_mask = mask_s & (y == 1)
+
+        n_ctrl = int(np.sum(ctrl_mask))
+        n_case = int(np.sum(case_mask))
+
+        if n_ctrl == 0 or n_case == 0:
+            continue
+
+        cov_ctrl = covariate[ctrl_mask]
+        sc_ctrl = score[ctrl_mask]
+
+        # Model score ~ covariate in CONTROLS (linear regression)
+        if len(np.unique(cov_ctrl)) > 1:
+            slope, intercept, _, _, _ = stats.linregress(cov_ctrl, sc_ctrl)
+        else:
+            slope, intercept = 0.0, float(np.mean(sc_ctrl))
+
+        # Control residuals and residual SD
+        r_ctrl = sc_ctrl - (intercept + slope * cov_ctrl)
+        sd_ctrl = float(np.std(r_ctrl, ddof=1)) if len(r_ctrl) > 1 else 1.0
+        if sd_ctrl <= 1e-12 or np.isnan(sd_ctrl):
+            sd_ctrl = 1.0
+        e_ctrl = r_ctrl / sd_ctrl
+
+        # Case residuals standardised by control SD
+        cov_case = covariate[case_mask]
+        sc_case = score[case_mask]
+        r_case = sc_case - (intercept + slope * cov_case)
+        e_case = r_case / sd_ctrl
+
+        # Case placement value: share of control residuals below the case residual
+        # Vectorised comparison: e_ctrl[newaxis, :] vs e_case[:, newaxis]
+        u_case = np.mean(
+            (e_ctrl[np.newaxis, :] < e_case[:, np.newaxis]).astype(float)
+            + 0.5 * (e_ctrl[np.newaxis, :] == e_case[:, np.newaxis]).astype(float),
+            axis=1,
+        )
+        case_placement_values.extend(u_case)
+
+    if len(case_placement_values) == 0:
+        return float("nan")
+
+    return float(np.mean(case_placement_values))
+
 
 def aauc(
     y: np.ndarray,
     score: np.ndarray,
     covariate: np.ndarray,
     strata: np.ndarray = None,
+    B: int = 500,
+    seed: int = 42,
 ) -> dict:
-    """Adjusted AUC using placement values (Janes & Pepe, Biostatistics 2008).
+    """Janes & Pepe covariate-adjusted AUC with bootstrap CI.
 
-    Computes AUC of the score adjusted for a continuous covariate (e.g. speed).
-    Within each stratum (e.g. study), placement values of the covariate are
-    computed on the control group and subtracted from the score's placement values.
-    Returns {aauc, variance, se, ci_lower, ci_upper}.
+    Within each study/stratum, model score ~ speed in CONTROLS (linear),
+    standardise residuals, case placement value = share of control residuals
+    below the case residual; AAUC = mean over cases.
+    CI is estimated via stratified participant bootstrap.
     """
     y = np.asarray(y, int)
     score = np.asarray(score, float)
@@ -218,43 +298,45 @@ def aauc(
     else:
         strata = np.asarray(strata)
 
-    pos_mask = y == 1
-    neg_mask = y == 0
+    point_aauc = _compute_aauc_point(y, score, covariate, strata)
 
-    # Placement values of `score` among controls
-    p_score_neg = score[neg_mask]
-    placement_score = np.mean(
-        (p_score_neg[np.newaxis, :] < score[:, np.newaxis]).astype(float)
-        + 0.5 * (p_score_neg[np.newaxis, :] == score[:, np.newaxis]).astype(float),
-        axis=1,
-    )
+    # Bootstrap CI
+    rng = np.random.default_rng(seed)
+    n = len(y)
+    boot_vals = []
 
-    # Placement values of `covariate` among controls (within strata)
-    placement_cov = np.zeros(len(y))
+    # Resample within (stratum, label) cells to ensure cases & controls in each stratum
+    cells = []
     for s in np.unique(strata):
-        mask_s = strata == s
-        ctrl_s = covariate[mask_s & neg_mask]
-        for i in np.where(mask_s)[0]:
-            cov_i = covariate[i]
-            placement_cov[i] = float(
-                np.mean((ctrl_s < cov_i).astype(float) + 0.5 * (ctrl_s == cov_i).astype(float))
-            )
+        for lab in (0, 1):
+            idx = np.where((strata == s) & (y == lab))[0]
+            if len(idx) > 0:
+                cells.append(idx)
 
-    # Adjusted score = placement of score - placement of covariate
-    adjusted = placement_score - placement_cov
+    for _ in range(B):
+        boot_idx = []
+        for cell_idx in cells:
+            sampled_idx = rng.choice(cell_idx, size=len(cell_idx), replace=True)
+            boot_idx.extend(sampled_idx)
+        boot_idx = np.array(boot_idx)
 
-    # AUC of adjusted score
-    if len(np.unique(y)) < 2:
-        return {"aauc": float("nan"), "variance": float("nan"), "se": float("nan"),
-                "ci_lower": float("nan"), "ci_upper": float("nan")}
+        val = _compute_aauc_point(
+            y[boot_idx], score[boot_idx], covariate[boot_idx], strata[boot_idx]
+        )
+        if not np.isnan(val):
+            boot_vals.append(val)
 
-    theta_adj, V10, V01 = _delong_components(y, adjusted)
-    var_adj = V10 + V01
-    se_adj = float(np.sqrt(var_adj))
+    if len(boot_vals) > 0:
+        ci_lower = float(np.percentile(boot_vals, 2.5))
+        ci_upper = float(np.percentile(boot_vals, 97.5))
+        se = float(np.std(boot_vals, ddof=1))
+    else:
+        ci_lower, ci_upper, se = float("nan"), float("nan"), float("nan")
+
     return {
-        "aauc": theta_adj,
-        "variance": var_adj,
-        "se": se_adj,
-        "ci_lower": float(theta_adj - 1.96 * se_adj),
-        "ci_upper": float(theta_adj + 1.96 * se_adj),
+        "aauc": point_aauc,
+        "se": se,
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
+        "B": B,
     }

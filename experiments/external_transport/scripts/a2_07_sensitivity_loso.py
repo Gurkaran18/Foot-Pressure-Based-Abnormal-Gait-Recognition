@@ -15,14 +15,15 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.external_transport.etx import paths, splits, models, metrics, reporting
-from experiments.external_transport.etx.guards import snapshot, verify
+from experiments.external_transport.etx.guards import snapshot, verify, safe_write
 
 
 def loso_run(subjects_df, model_id, feature_cols, cfg):
-    """Leave-one-study-out: train on 2 studies, test on the third. No standardisation."""
-    studies = subjects_df["study"].unique()
+    """Leave-one-study-out: train on 2 studies, test on the third. No standardisation across studies."""
+    studies = sorted(subjects_df["study"].unique())
     results = {}
     seed = cfg["cv"]["base_seed"]
+    C_grid = models._lr_C_grid(cfg)
 
     for held_out in studies:
         train_df = subjects_df[subjects_df["study"] != held_out].reset_index(drop=True)
@@ -33,23 +34,23 @@ def loso_run(subjects_df, model_id, feature_cols, cfg):
         # Inner CV for C selection (LR models)
         if model_id not in {"X1", "X13-ref"}:
             best_C, best_ll = None, float("inf")
-            C_grid = np.logspace(-3, 2, 11)
+            inner_seed = splits._seed_for_inner(seed, 0, len(results))
             inner_gen = list(splits.inner_folds(train_df, k=cfg["cv"]["inner_folds"],
-                                                seed=seed, strata=cfg["cv"].get("strata")))
+                                                seed=inner_seed, strata=cfg["cv"].get("strata")))
             for C in C_grid:
                 lls = []
                 for it_ids, iv_ids in inner_gen:
                     it_df = train_df[train_df["subject_id"].isin(it_ids)]
                     iv_df = train_df[train_df["subject_id"].isin(iv_ids)]
-                    p_tmp = models.make_pipeline(model_id, cfg, seed=seed)
+                    p_tmp = models.make_pipeline(model_id, cfg, seed=inner_seed)
                     models.set_C(p_tmp, C)
                     p_tmp.fit(it_df[feature_cols].values, it_df["label"].values)
                     prob_iv = np.clip(
-                        p_tmp.predict_proba(iv_df[feature_cols].values)[:, 1], 1e-9, 1 - 1e-9
+                        p_tmp.predict_proba(iv_df[feature_cols].values)[:, 1], 1e-9, 1.0 - 1e-9
                     )
                     ll = -np.mean(
                         iv_df["label"].values * np.log(prob_iv)
-                        + (1 - iv_df["label"].values) * np.log(1 - prob_iv)
+                        + (1.0 - iv_df["label"].values) * np.log(1.0 - prob_iv)
                     )
                     lls.append(ll)
                 if np.mean(lls) < best_ll:
@@ -74,7 +75,6 @@ def loso_run(subjects_df, model_id, feature_cols, cfg):
         print(f"  LOSO held={held_out}: AUC={auc_val:.4f} "
               f"sens={thr_m['sensitivity']:.3f} spec={thr_m['specificity']:.3f}")
 
-    # Mean across held-out studies
     auc_vals = [v["auc"] for v in results.values()]
     results["mean"] = {
         "auc": float(np.mean(auc_vals)),
@@ -87,7 +87,7 @@ def loso_run(subjects_df, model_id, feature_cols, cfg):
 
 def main():
     parser = argparse.ArgumentParser(description="E7: Sensitivity analyses")
-    parser.add_argument("--run-id", default="e7_sensitivity")
+    parser.add_argument("--run-id", default="day1")
     parser.add_argument("--subject-csv", default=None)
     args = parser.parse_args()
 
@@ -97,16 +97,21 @@ def main():
 
     before = snapshot()
 
+    # Discover subject CSV from --run-id first
     if args.subject_csv:
         csv_path = Path(args.subject_csv)
     else:
-        candidates = sorted(paths.OUTPUTS_DIR.glob("*/features/subject_v2.csv"))
-        if not candidates:
-            print("ERROR: subject_v2.csv not found. Run a2_03 first.", file=sys.stderr)
-            sys.exit(1)
-        csv_path = candidates[-1]
-    print(f"Using subject CSV: {csv_path}")
+        run_csv = paths.outputs_root(args.run_id) / "features" / "subject_v2.csv"
+        if run_csv.exists():
+            csv_path = run_csv
+        else:
+            candidates = sorted(paths.OUTPUTS_DIR.glob("*/features/subject_v2.csv"))
+            if not candidates:
+                print("ERROR: subject_v2.csv not found. Run a2_03 first.", file=sys.stderr)
+                sys.exit(1)
+            csv_path = candidates[-1]
 
+    print(f"Using subject CSV: {csv_path}")
     subjects_df = pd.read_csv(csv_path)
     if "qc_pass" in subjects_df.columns:
         subjects_df = subjects_df[subjects_df["qc_pass"]].reset_index(drop=True)
@@ -146,7 +151,7 @@ def main():
         "loso": loso_result,
     }
     out_path = out_dir / "sensitivity_results.json"
-    out_path.write_text(json.dumps(result, indent=2, default=str))
+    safe_write(out_path, json.dumps(result, indent=2, default=str))
     print(f"\nResults written to {out_path}")
 
     after = snapshot()

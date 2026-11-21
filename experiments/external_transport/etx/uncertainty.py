@@ -2,11 +2,12 @@
 
 Owner: Teammate (model/*). Spec: research/protocol/A2_IMPLEMENTATION_SPEC.md §9 (R5)
 """
-import hashlib
 from typing import Callable
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import StratifiedKFold, KFold
+from scipy import stats
 
 from .metrics import auc as _auc
 
@@ -39,49 +40,84 @@ def bootstrap_cv(
     subjects_df: pd.DataFrame,
     B: int,
     seed: int,
+    k: int = 5,
 ) -> dict:
-    """Bootstrap-of-CV with grouped (subject-level) resampling.
+    """Bootstrap-of-CV with grouped (subject-level) resampling (spec R5).
+
+    Assign folds on UNIQUE subjects, then expand duplicates into the same fold;
+    fail loudly on errors (no bare except).
 
     Parameters
     ----------
-    run_cv : callable(df) -> float
-        A function that takes a subject DataFrame and returns an AUC (or metric).
-        Internally it must do subject-level CV (not window-level).
+    run_cv : callable(boot_df, fold_splits) -> float
+        Function running CV on boot_df using fold_splits (list of (train_idx, test_idx))
+        and returning metric (e.g. AUC).
     subjects_df : pd.DataFrame
-        One row per subject with at least 'subject_id'.
+        One row per subject with columns 'subject_id' and 'label'.
     B : int
         Number of bootstrap draws.
     seed : int
         RNG seed.
+    k : int
+        Number of folds (default 5).
 
     Returns
     -------
     dict with keys: mean, se, ci_lower, ci_upper, B, seed
     """
     rng = np.random.default_rng(seed)
-    ids = subjects_df["subject_id"].unique()
+    unique_sids = np.array(subjects_df["subject_id"].unique())
+    n_unique = len(unique_sids)
+
+    subj_meta = subjects_df.drop_duplicates("subject_id").set_index("subject_id")
+
     boot_values = []
 
     for b in range(B):
-        sampled_ids = rng.choice(ids, size=len(ids), replace=True)
-        # Build a resampled DataFrame; subjects that appear k times get k copies
-        # with the same fold assignment (grouped duplicates — same fold as original)
-        counts = {}
-        for sid in sampled_ids:
-            counts[sid] = counts.get(sid, 0) + 1
-        rows = []
-        for sid, cnt in counts.items():
-            row = subjects_df[subjects_df["subject_id"] == sid].copy()
-            for _ in range(cnt):
-                rows.append(row)
-        boot_df = pd.concat(rows, ignore_index=True)
-        try:
-            val = run_cv(boot_df)
-            boot_values.append(val)
-        except Exception:
-            pass  # skip failed draws
+        draw_seed = seed + b + 1
+        # 1. Resample subject IDs with replacement
+        sampled_sids = rng.choice(unique_sids, size=n_unique, replace=True)
+        unique_sampled, counts = np.unique(sampled_sids, return_counts=True)
 
-    boot_values = np.array(boot_values)
+        # 2. Assign folds on UNIQUE subjects drawn
+        u_labels = subj_meta.loc[unique_sampled, "label"].values
+        min_class_count = min(np.sum(u_labels == 0), np.sum(u_labels == 1))
+        n_splits = min(k, max(2, min_class_count))
+
+        if min_class_count >= n_splits:
+            splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=draw_seed)
+            split_gen = splitter.split(unique_sampled, u_labels)
+        else:
+            splitter = KFold(n_splits=n_splits, shuffle=True, random_state=draw_seed)
+            split_gen = splitter.split(unique_sampled)
+
+        fold_map = {}
+        for fold_idx, (_, test_indices) in enumerate(split_gen):
+            for s in unique_sampled[test_indices]:
+                fold_map[s] = fold_idx
+
+        # 3. Expand duplicates into the same fold
+        rows = []
+        for sid, cnt in zip(unique_sampled, counts):
+            subj_row = subj_meta.loc[[sid]].reset_index()
+            subj_row["fold"] = fold_map[sid]
+            for _ in range(cnt):
+                rows.append(subj_row)
+
+        boot_df = pd.concat(rows, ignore_index=True)
+
+        # Build fold_splits from the expanded rows
+        fold_splits = []
+        for f in range(n_splits):
+            train_idx = np.where(boot_df["fold"] != f)[0]
+            test_idx = np.where(boot_df["fold"] == f)[0]
+            fold_splits.append((train_idx, test_idx))
+
+        # 4. Run CV evaluation (fail loudly, no bare except)
+        val = run_cv(boot_df, fold_splits)
+        boot_values.append(val)
+
+    boot_values = np.array(boot_values, dtype=float)
     mean_val = float(np.mean(boot_values))
     se_val = float(np.std(boot_values, ddof=1))
     return {
@@ -102,24 +138,29 @@ def bootstrap_cv(
 def ledell_ci(
     y: np.ndarray,
     p: np.ndarray,
-    folds: np.ndarray,
+    folds: np.ndarray = None,
     alpha: float = 0.05,
 ) -> dict:
     """LeDell influence-curve CI for cross-validated AUC.
+
+    Asymptotically exact variance via the influence function:
+    For positive case i: D_i = (n / n1) * (psi_pos[i] - theta)
+    For negative case j: D_j = (n / n0) * (theta - psi_neg[j])
+    Var(theta) = (1 / n^2) * sum(D_k^2).
 
     Parameters
     ----------
     y : array of 0/1 labels (n,)
     p : array of predicted probabilities (n,)
-    folds : array of integer fold assignments (n,)  — same fold = same subject's data
+    folds : optional array of integer fold assignments
     alpha : significance level (default 0.05 → 95% CI)
 
     Returns
     -------
-    dict: {auc, se, ci_lower, ci_upper}
+    dict: {auc, se, ci_lower, ci_upper, method}
     """
-    from scipy import stats as _stats
-    y, p, folds = np.asarray(y, int), np.asarray(p, float), np.asarray(folds, int)
+    y, p = np.asarray(y, int), np.asarray(p, float)
+    n = len(y)
     theta = _auc(y, p)
 
     pos_mask = y == 1
@@ -127,9 +168,9 @@ def ledell_ci(
     n1 = int(pos_mask.sum())
     n0 = int(neg_mask.sum())
 
-    # Influence function for AUC
-    # IC_i (positive) = (1/n0) sum_j 1{X_i > Y_j} - theta  (Delong's V10 term)
-    # IC_j (negative) = (1/n1) sum_i 1{X_i > Y_j} - theta  (Delong's V01 term)
+    if n1 == 0 or n0 == 0:
+        return {"auc": float("nan"), "se": float("nan"), "ci_lower": float("nan"), "ci_upper": float("nan")}
+
     p_pos = p[pos_mask]
     p_neg = p[neg_mask]
 
@@ -144,19 +185,16 @@ def ledell_ci(
         axis=1,
     )
 
-    ic = np.zeros(len(y))
-    ic[pos_mask] = (psi_pos - theta) / n1
-    ic[neg_mask] = (psi_neg - theta) / n0
+    # Influence function values
+    D = np.zeros(n)
+    D[pos_mask] = (float(n) / n1) * (psi_pos - theta)
+    D[neg_mask] = (float(n) / n0) * (theta - psi_neg)
 
-    # Variance = sum over folds of (fold IC)^2 (grouped)
-    var_ic = 0.0
-    unique_folds = np.unique(folds)
-    for f in unique_folds:
-        fold_ic = ic[folds == f].sum()
-        var_ic += fold_ic ** 2
-    se = float(np.sqrt(var_ic))
+    # Variance of theta = (1 / n^2) * sum(D^2) = (1 / n) * Var(D)
+    var_theta = float(np.sum(D ** 2) / (n ** 2))
+    se = float(np.sqrt(var_theta))
 
-    z = float(_stats.norm.ppf(1 - alpha / 2))
+    z = float(stats.norm.ppf(1.0 - alpha / 2.0))
     return {
         "auc": float(theta),
         "se": se,

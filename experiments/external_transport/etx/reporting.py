@@ -9,6 +9,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .guards import safe_write
+
 
 def _git_info(repo_root: Path) -> dict:
     """Return {commit, dirty} from git; both None if git unavailable."""
@@ -65,18 +67,18 @@ def run_manifest(run_id: str, cfg: dict) -> dict:
 
 
 def save_manifest(manifest: dict, out_dir: Path) -> Path:
-    """Write run_manifest.json to out_dir. Returns the path."""
+    """Write run_manifest.json to out_dir using safe_write. Returns the path."""
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "run_manifest.json"
-    path.write_text(json.dumps(manifest, indent=2, default=str))
+    safe_write(path, json.dumps(manifest, indent=2, default=str))
     return path
 
 
 def save_metrics_json(metrics: dict, out_dir: Path, name: str = "metrics.json") -> Path:
-    """Write a metrics dict to out_dir/<name>. Returns the path."""
+    """Write a metrics dict to out_dir/<name> using safe_write. Returns the path."""
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / name
-    path.write_text(json.dumps(metrics, indent=2, default=str))
+    safe_write(path, json.dumps(metrics, indent=2, default=str))
     return path
 
 
