@@ -25,8 +25,8 @@ Add new entries at the **top** of "Log entries" (newest first):
 
 ## 2. Who owns what (do not edit the other person's modules)
 
-- **Lead**, `data/*` branches: `paths`, `guards`, `manifest`, `conditions`, `signal`, `events`, `features`, `qc`, `cache`, the `kcurve`/`emulation` samplers, and the WearGait-PD feature extraction.
-- **Teammate**, `model/*` branches: `fake_features`, `splits`, `models`, `metrics`, `uncertainty`, `demographics`, `reporting`, scripts `a2_05`–`a2_07`, the K-curve/emulation evaluation, the WearGait-PD loader, and figures.
+- **Lead**, `data/*` branches: `paths`, `guards`, `manifest`, `conditions`, `signal`, `events`, `features`, `qc`, `cache`, the `kcurve`/`emulation` samplers, the WearGait-PD download, blinding, loader and feature extraction (loader moved from Teammate on 2026-11-21).
+- **Teammate**, `model/*` branches: `fake_features`, `splits`, `models`, `metrics`, `uncertainty`, `demographics`, `reporting`, scripts `a2_05`–`a2_07`, the K-curve/emulation evaluation, and figures.
 - New code goes in `experiments/external_transport/`. All merges into `main` go through a pull request reviewed by the other person.
 - Changing any output file format in section 5 of the A2 spec requires telling the other person first.
 

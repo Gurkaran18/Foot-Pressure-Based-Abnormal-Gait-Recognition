@@ -29,19 +29,36 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation, WearGait-PD download |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: structure surveyed, download + blinding next (Lead) |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | Not started |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
 ## Work split
 
-- **Lead (with Claude Code), branch `data/*`:** `paths`, `guards`, `manifest`, `conditions`, `signal`, `events`, `features`, `qc`, `cache`, the `kcurve`/`emulation` samplers, and the WearGait-PD feature extraction.
-- **Teammate, branch `model/*`:** `fake_features`, `splits`, `models`, `metrics`, `uncertainty`, `demographics`, `reporting`, scripts `a2_05`–`a2_07`, the K-curve/emulation evaluation, the WearGait-PD loader, figures and slides. See `TEAMMATE_WORK_PLAN.pdf`.
+- **Lead (with Claude Code), branch `data/*`:** `paths`, `guards`, `manifest`, `conditions`, `signal`, `events`, `features`, `qc`, `cache`, the `kcurve`/`emulation` samplers, and the WearGait-PD download, blinding, loader and feature extraction.
+- **Teammate, branch `model/*`:** `fake_features`, `splits`, `models`, `metrics`, `uncertainty`, `demographics`, `reporting`, scripts `a2_05`–`a2_07`, the K-curve/emulation evaluation, figures and slides. (The WearGait-PD loader moved to the Lead on 2026-11-21.) See `TEAMMATE_WORK_PLAN.pdf`.
 
 ---
 
 ## Log entries
+
+### 2026-11-21 — WearGait-PD loader moved to Lead; dataset structure surveyed
+**Who:** Lead  **Branch/commit:** main
+- **Ownership:** the WearGait-PD loader moves from the Teammate to the Lead (`CLAUDE.md` §2 and the work split above updated). The Teammate keeps demographics, the AAUC gate and the E8–E9 evaluation.
+- **Dependency:** added `synapseclient` to `experiments/external_transport/requirements-a2.txt` (installed 4.15.0; 96 tests still pass).
+- **Synapse survey** (anonymous metadata only, no data downloaded, no per-subject group listing). Project syn52540892 has no extra access requirements, so a free logged-in account is enough. We use `Version 1 (Cross-sectional)` (syn55052683):
+  - `CONTROL PARTICIPANTS/CSV files`: 51 controls (`HC##_*`); `PD PARTICIPANTS/CSV files`: 72 PD (`NLS##_*`). Each has `_SelfPace.csv` (insoles), `_SelfPace_mat.csv` (walkway), `_SelfPace_matTURN.csv`, plus HurriedPace, TUG, Balance and TandemGait.
+  - The extra Seattle participants (`WHC##` 31 controls, `WPD##` 28 PD, 3 `NLS## (control)`) exist only as `.mat` files.
+  - There are 2 demographics files, one per group, and a `Walkway-derived metrics` CSV (PKMAS, SelfPace + HurriedPace).
+- **Blinding consequence:** both the folder names and the file prefixes (`HC` vs `NLS`) reveal the diagnosis, and the demographics come split by group. The download script must therefore rename every file to a neutral code and merge the demographics without any group-revealing column. The code-to-group key goes only into `labels/`, which is git-ignored and unread until `model-frozen`.
+
+**In plain words**
+1. I now own the code that reads WearGait-PD; Janak keeps the statistics work.
+2. We looked at the online dataset (names only, no data). We need about 123 people's "SelfPace" walking files from version 1.
+3. The file names themselves say who has Parkinson's, so our download script will rename everything to neutral codes straight away.
+
+**Why it matters:** WearGait-PD is our external test. Hiding the diagnosis until the model is frozen keeps that test honest.
 
 ### 2026-11-21 — Lead review of PR #4: approved and merged
 **Who:** Lead  **Branch/commit:** main, `0daa1b1`
