@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done: toe-off tolerances FAIL → **primary external model = M1-fb** (B-D8, confirmed); M1 secondary |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 blinded covariates (speed/age/sex, 123/123) done |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B in progress: B1 blinding, B2 loader/features, B3 R6 agreement done (fallback triggered) |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,25 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-22 — B4: blinded WearGait-PD covariates (speed, age, sex); `labels/` exception
+**Who:** Lead  **Branch/commit:** data/weargait-covariates
+- **Rule change (approved by the Lead):** `CLAUDE.md` §3 now allows one exception to "no code reads `labels/`". The blinding scripts `b_01` (writes the key) and `b_04` (reads only `code` and `original_subject`) may use it; they never print or save anyone's group. An ad-hoc diagnostic that read the key outside b_04 was correctly blocked by the auto-mode safety check and was not run.
+- **New:** `etx/weargait_covariates.py` (ID normalisation, harmonised demographics, PKMAS reader, `walkway_speed` from footprints), `scripts/b_04_weargait_covariates.py`, config `weargait.walkway_cell_m: 0.0127`, `tests/test_weargait_covariates.py` (4 tests; 113 pass).
+- **Output:** `$WEARGAIT_ROOT/blinded/covariates.csv` (code, speed_selfpace_mps, age_y, sex), read-only, no group, one format for all rows.
+  - Age and sex come from the two group-split demographics files, harmonised: their column names, formatting and PD-only columns differed and would have leaked the group. UPDRS, H&Y, medication and DBS are never read.
+- **B-D9 speed:** the official PKMAS SelfPace velocity exists for only 94/123, and its missingness is group-related (a leak, plus a biased H2 subset). We therefore compute speed from the raw walkway footprints for all 123.
+  - Agreement with PKMAS (n = 94): r = 0.990, bias −0.23 cm/s, max |diff| 30.5 cm/s (a few trials disagree; not investigated further, since that would need the key outside b_04).
+  - An 8-trial feasibility check gave scale = 1.27 cm/cell (CV 0.2%), r = 1.000: exactly the 0.5-inch Zeno sensor pitch.
+- **Results:** 123/123 complete. Speed mean 0.97 m/s (0.39–1.72); age mean 71.4 (45–91); sex F 63 / M 60.
+- **Next:** hand-off file for the frozen-model scoring (WearGait-PD subject table in the `subject_v2.csv` format), then the freeze with the Teammate.
+
+**In plain words**
+1. We built one table per WearGait-PD person, holding only their code, walking speed, age and sex. No diagnosis.
+2. The official speed file was missing 29 people, mostly patients, which itself would have hinted who is ill. So we measured speed ourselves from the walkway footprints for everyone. It matches the official values (r = 0.99).
+3. Only the blinding scripts may look at the code key, and that is now written in our rules.
+
+**Why it matters:** H2 (speed-adjusted test) can now use all 123 people, and nothing in the table gives away the diagnosis.
 
 ### 2026-11-22 — B-D8 confirmed: M1-fb is the primary external model
 **Who:** Lead  **Branch/commit:** data/fallback-decision

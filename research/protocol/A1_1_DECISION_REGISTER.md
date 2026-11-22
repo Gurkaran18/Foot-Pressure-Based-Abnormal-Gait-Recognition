@@ -45,6 +45,7 @@ All made from blinded WearGait-PD data with no labels read. Details and numbers 
 | **B-D6** | Emulation 4 segments × **4–5** strides (resolves D7 "final segment length") | Inventory ≈ 4.25 strides/pass | Approved 2026-11-22 |
 | **B-D7** | `min_strides_per_foot` stays 10 | All 113 pass | Approved 2026-11-22 |
 | **B-D8** | **D8 fallback triggered: primary external model = M1-fb** (stride_time_mean, stride_time_cv). M1 (T1-core) reported as a clearly labelled secondary analysis | R6: stride bias +0.4 ms (pass); stance bias −35 ms (fail, tol. 20); swing SD 39.5 ms RM / 20.6 within-subject (fail, tol. 15). Tolerances unchanged after seeing the result | Approved 2026-11-22 |
+| **B-D9** | WearGait-PD SelfPace speed for H2 = **footprint-based walkway speed for all 123** (pressure-weighted contact centroids; same-foot stride length / time; 0.0127 m cells). Resolves the D13 open item (speed exists; definition) | Official PKMAS SelfPace velocity covers only 94/123, and its missingness is group-related (a leak and a biased subset). Footprint speed vs PKMAS on n = 94: r = 0.990, bias −0.23 cm/s; the cell size is a physical constant, not fitted | Approved 2026-11-22 |
 
 **Effect on H1–H3:** H1, H2 and H3 are evaluated with the frozen **M1-fb**. Holm over H1–H3 (D14) is unchanged. The H3 internal reference is the M1-fb emulated AUC. The M1 results (same H1–H3 procedures) are secondary, not part of the Holm family.
 
