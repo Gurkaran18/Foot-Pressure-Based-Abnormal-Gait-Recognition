@@ -31,6 +31,23 @@
 | **D16** | Source of K_target (stride count expected in WearGait-PD) | **Option A (recommended):** fix from the published protocol geometry now (candidates 10/15/20; final pick from the label-blind inventory median, rounded **down** to a grid level). Option B: fix from geometry only | Protocol [P]. Using label-free stride counts is a design choice, not fitting a parameter, but it is data-dependent | Whether you accept label-blind external stride counts as design input | **Yes** | Approved 2026-11-19 |
 | **D17** | SD convention for CV features | **Sample SD (ddof = 1)** in v2 (the current code uses ddof = 0) | ddof = 0 understates CV by √((K−1)/K), i.e. −10.6% at K = 5 (R4) | — | **Yes** (with D5) | Approved 2026-11-19 |
 
+## Phase B decisions (label-blind, before the freeze)
+
+All made from blinded WearGait-PD data with no labels read. Details and numbers are in `PROJECT_LOG.md` (2026-11-22). The config keys are in `experiments/external_transport/config/a2.yaml`.
+
+| # | Decision | Basis | Status |
+|---|---|---|---|
+| **B-D1** | Trials without insole columns excluded (10/123 → 113) | Equipment; group split to be reported after unblinding | Approved 2026-11-22 |
+| **B-D2** | `ClinicalEvent` (FoG/Stagger) never read, never used to drop strides | Reveals diagnosis | Approved 2026-11-22 |
+| **B-D3** | Gaps ≤ 20 ms linearly interpolated; a stride touching a longer gap is invalid | 1,771/1,780 in-walk gaps are 1 sample | Approved 2026-11-22 (revised the same day) |
+| **B-D4** | Only strides fully inside one `Walk` pass; MAD rule on those | Mirrors gaitpdb straight walking | Approved 2026-11-22 |
+| **B-D5** | **K_target = 15** (resolves D16) | Inventory median 17, rounded down to the grid | Approved 2026-11-22 |
+| **B-D6** | Emulation 4 segments × **4–5** strides (resolves D7 "final segment length") | Inventory ≈ 4.25 strides/pass | Approved 2026-11-22 |
+| **B-D7** | `min_strides_per_foot` stays 10 | All 113 pass | Approved 2026-11-22 |
+| **B-D8** | **D8 fallback triggered: primary external model = M1-fb** (stride_time_mean, stride_time_cv). M1 (T1-core) reported as a clearly labelled secondary analysis | R6: stride bias +0.4 ms (pass); stance bias −35 ms (fail, tol. 20); swing SD 39.5 ms RM / 20.6 within-subject (fail, tol. 15). Tolerances unchanged after seeing the result | Approved 2026-11-22 |
+
+**Effect on H1–H3:** H1, H2 and H3 are evaluated with the frozen **M1-fb**. Holm over H1–H3 (D14) is unchanged. The H3 internal reference is the M1-fb emulated AUC. The M1 results (same H1–H3 procedures) are secondary, not part of the Holm family.
+
 ## Approval record
 
 **2026-11-19:** the lead approved all recommended defaults (D2–D17). D10 was modified: no custodian; the freeze is done with the `model-frozen` git tag; no code reads `labels/` before that tag. Ga `_02` stays excluded. Ga/Ju speed methods stay "unverified", since only online sources are available.

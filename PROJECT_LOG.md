@@ -29,7 +29,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done: toe-off tolerances FAIL → D8 fallback (T1-fallback) triggered, pending Lead confirmation |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done: toe-off tolerances FAIL → **primary external model = M1-fb** (B-D8, confirmed); M1 secondary |
 | Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B in progress: B1 blinding, B2 loader/features, B3 R6 agreement done (fallback triggered) |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
@@ -42,6 +42,28 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-22 — B-D8 confirmed: M1-fb is the primary external model
+**Who:** Lead  **Branch/commit:** data/fallback-decision
+- The Lead confirmed the pre-declared D8 consequence of the R6 result:
+  - **primary external model = M1-fb** (stride_time_mean, stride_time_cv), used for H1–H3 and the Holm family;
+  - **M1 (T1-core) is secondary**, clearly labelled and outside the Holm family.
+- `research/protocol/A1_1_DECISION_REGISTER.md`: new section "Phase B decisions" (B-D1..B-D8; B-D5 resolves D16, B-D6 resolves D7).
+- `config/a2.yaml`: new `external` block (`primary_model: M1-fb`, `secondary_models: [M1]`).
+- **Teammate actions before the freeze:**
+  1. pull `main`;
+  2. rerun `a2_09_emulation` (emulation is now 4 × [4, 5]);
+  3. E8/E9 evaluation for **both** M1-fb and M1 (the H3 internal reference = M1-fb emulated AUC);
+  4. D15 rule (train-full vs train-K) for M1-fb;
+  5. demographics/AAUC gate;
+  6. freeze both models.
+
+**In plain words**
+1. We are following our own rule: the main test now uses the 2-feature model (stride time + stride variability).
+2. The full 5-feature model is still reported, but as a "secondary" result.
+3. This is written in the decision register and the config, so Janak's code uses the right model.
+
+**Why it matters:** the main result can only rest on what the insoles measure reliably, and we decided that before seeing any diagnosis.
 
 ### 2026-11-22 — B3 / R6: insole–walkway agreement — toe-off tolerances fail
 **Who:** Lead  **Branch/commit:** data/r6-agreement

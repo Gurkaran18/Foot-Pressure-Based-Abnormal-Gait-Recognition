@@ -66,3 +66,6 @@ agreement:                               # R6 (A1.1 Methods Revisions), toleranc
   tol_swing_sd_ms: 15                    # SD of per-stride swing differences (repeated-measures SD)
   tol_ds_bias_pp: 2
   tol_drift_ms: 15                       # |HS-residual slope| x trial duration above this = drift flag
+external:                                # B-D8 (2026-11-22): D8 fallback triggered by R6 (toe-off tolerances failed)
+  primary_model: M1-fb                   # H1-H3 + Holm family (D14) use this frozen model
+  secondary_models: [M1]                 # reported, clearly labelled secondary; not in the Holm family
