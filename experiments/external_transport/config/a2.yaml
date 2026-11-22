@@ -57,3 +57,12 @@ weargait:                                # Phase B decisions B-D1..B-D7, approve
   k_target: 15                           # B-D5 / D16: median in-walk min(L,R) valid strides = 17 -> grid level 15
   # B-D6: emulation.strides_per_segment = [4, 5];  B-D7: features.min_strides_per_foot stays 10
 
+agreement:                               # R6 (A1.1 Methods Revisions), tolerances D8 (provisional engineering choices)
+  max_lag_s: 5.0                         # shared L+R clock-offset search window
+  pair_tol_s: 0.15                       # walkway IC <-> insole HS matching window
+  walkway_max_stride_s: 2.5              # consecutive walkway ICs further apart = different pass
+  tol_stride_bias_ms: 10
+  tol_stance_bias_ms: 20
+  tol_swing_sd_ms: 15                    # SD of per-stride swing differences (repeated-measures SD)
+  tol_ds_bias_pp: 2
+  tol_drift_ms: 15                       # |HS-residual slope| x trial duration above this = drift flag

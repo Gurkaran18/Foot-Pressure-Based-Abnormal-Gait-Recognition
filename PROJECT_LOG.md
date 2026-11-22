@@ -29,8 +29,8 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. Next: R6 insole–walkway agreement (Lead) |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B in progress: B1 blinding, B2 loader/features + decisions B-D1..B-D7 done; R6 agreement next |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done: toe-off tolerances FAIL → D8 fallback (T1-fallback) triggered, pending Lead confirmation |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B in progress: B1 blinding, B2 loader/features, B3 R6 agreement done (fallback triggered) |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,42 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-22 — B3 / R6: insole–walkway agreement — toe-off tolerances fail
+**Who:** Lead  **Branch/commit:** data/r6-agreement
+- **New:**
+  - `etx/agreement.py`: shared L/R clock offset by contact-signal agreement (±5 s), walkway strides, IC↔HS pairing (±150 ms), offset-free differences, per-trial DS, Bland & Altman 2007 repeated-measures limits, participant-mean limits, drift slope.
+  - `scripts/b_03_agreement.py`.
+  - Config `agreement` block (D8 tolerances).
+  - `tests/test_agreement.py`: 4 tests; 109 pass.
+- **Run `b03_20261122`** (113 insole trials, label-free):
+  - 2,947 paired strides. 99.1% of walkway initial contacts matched an insole heel strike.
+  - Clock offset median +0.01 s (IQR −0.01 to +0.02). 4 trials hit the stride-period alias (|offset| > 0.2 s); excluding them changes nothing.
+
+  | Metric (insole − walkway) | Bias | SD (RM total / within-subject) | 95% limits (stride-level, RM) | Tolerance | Result |
+  |---|---|---|---|---|---|
+  | Stride duration | +0.4 ms | 16.8 / 16.8 ms | −32.5 to +33.4 ms | bias ≤ 10 ms | **PASS** |
+  | Stance duration | −35.3 ms (participant-mean −28.6) | 39.6 / 21.7 ms | −112.9 to +42.3 ms | bias ≤ 20 ms | **FAIL** |
+  | Swing duration | +35.7 ms | **39.5 / 20.6 ms** | −41.6 to +113.0 ms | SD ≤ 15 ms | **FAIL** (on either SD) |
+  | Double support (per trial) | −1.96 pp | 5.3 pp | −12.3 to +8.4 pp | bias ≤ 2 pp, no drift | bias PASS; drift flags 29 / inter-insole 48 → **FAIL** |
+
+- **Reading:**
+  - The insole heel strike comes about 10–19 ms later and the toe-off about 10–16 ms earlier than the walkway's (the insole threshold is 10% of range; the walkway registers any pressure). So insole stance is shorter and swing longer.
+  - The bias varies between people (participant-mean SD ≈ 30 ms); 55% of trials have |bias| > 20 ms.
+  - Stride duration (heel strike to heel strike) is unbiased.
+  - Drift caveat: with ~25 points per trial and a residual SD ≈ 28 ms, the slope standard error (≈ 0.5 ms/s) exceeds the flag threshold (15 ms / 46 s ≈ 0.33 ms/s), so most drift flags are probably noise. Drift only affects DS, which is not a model input.
+- **Pre-declared consequence (D8; Methods R6.3 failure rule; R7 l.240):** "T1-fallback … depends on heel-strike events only. It is the pre-declared reduction if toe-off agreement fails."
+  - stance_pct, swing_time_cv and asym_swing fail. The **primary external model becomes M1-fb** (stride_time_mean, stride_time_cv; internal AUC 0.665).
+  - No correction using WearGait-PD data is applied.
+  - Proposed: M1 (T1-core) reported as a clearly labelled secondary analysis. Needs Lead confirmation, then the Teammate must be told before the freeze.
+- **No labels read.** The tolerances were not changed after seeing the result.
+
+**In plain words**
+1. We compared the insole step timings with the walkway's (the "ground truth" mat) for 2,947 strides.
+2. Full stride time matches almost perfectly (0.4 ms off). But the moment the foot lifts off is detected about 30 ms differently, and that difference changes from person to person.
+3. Our own rule, written before we saw this, says: if lift-off timing fails, use only the stride-time features (model M1-fb).
+
+**Why it matters:** this protects us from claiming a result built on features the insoles can't measure reliably. Following our pre-declared rule keeps the study honest, even though the safer model is weaker.
 
 ### 2026-11-22 — B2: WearGait-PD loader, Phase B decisions B-D1..B-D7, emulation re-tuned
 **Who:** Lead  **Branch/commit:** data/weargait-loader
