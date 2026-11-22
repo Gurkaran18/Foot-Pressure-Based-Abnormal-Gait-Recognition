@@ -29,8 +29,8 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: downloaded + blinded (123 subjects, 367 SelfPace files); label-free exploration next (Lead) |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B started 2026-11-22: B1 download + blinding done |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. Next: R6 insole–walkway agreement (Lead) |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B in progress: B1 blinding, B2 loader/features + decisions B-D1..B-D7 done; R6 agreement next |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,41 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-22 — B2: WearGait-PD loader, Phase B decisions B-D1..B-D7, emulation re-tuned
+**Who:** Lead  **Branch/commit:** data/weargait-loader
+- **Label-free exploration** of the 123 blinded SelfPace files:
+  - Insole sampling is 100 Hz with no time gaps. Each insole has 16 Moticon sensors per foot plus `LTotalForce`/`RTotalForce`, most likely in N (p99 ≈ 1,200).
+  - `GeneralEvent` marks Standing/Walk/Turn; 111 trials have 4 Walk passes and 2 have 5. Median trial length is 46 s.
+  - `L/R Foot Contact` and `L/R Foot Pressure` come from the walkway (always 0 off the mat), so they are used for R6 only.
+  - `ClinicalEvent` holds `FoG` (6 files) and `Stagger` (4 files), which reveal the diagnosis.
+  - 10 of 123 trials have no insole columns.
+- **Decisions, approved by the Lead 2026-11-22, label-blind, written to the config `weargait` block:**
+  - B-D1: trials without insoles are excluded, leaving 113. Group split to be reported after unblinding.
+  - B-D2: `ClinicalEvent` is never read and never used to drop strides.
+  - B-D3 (revised the same day): gaps of ≤ 20 ms (1–2 samples) are linearly interpolated; a stride touching any longer gap (margin 0.10 s) is invalid. Of the in-walk gaps, 1,771/1,780 were a single sample. Without interpolation, 17% of in-walk strides were lost and only 102/113 trials passed QC.
+  - B-D4: only strides fully inside one Walk pass count. The 3-MAD rule is applied to those strides only.
+  - B-D5 / D16: **K_target = 15** (the median of min(L,R) valid strides is 17, rounded down to the grid).
+  - B-D6 / D7 final: emulation `strides_per_segment` is **[4, 5]** (was [6, 7]).
+  - B-D7: `min_strides_per_foot` stays 10.
+- **New code:**
+  - `etx/weargait.py`: loader (reads only Time, GeneralEvent and L/R TotalForce), `fill_short_gaps`, `pass_ids`, stride validity.
+  - `scripts/b_02_weargait_features.py`.
+  - `tests/test_weargait_loader.py`: 5 tests. 105 pass in total.
+- **Results:**
+  - B2 (run `b02_20261122`): **113/113 insole trials pass QC**. Median min(L,R) valid strides 17 (p10 12, min 10, max 48).
+  - Feature means: stride time 1.19 s, stride CV 4.36, swing CV 7.73, stance 65.2%, asym swing 5.2.
+  - Gaitpdb emulation rerun (`day2_emulation45`): 161–164/165 eligible per draw; emulated walks have a median of 18 strides/foot (WearGait-PD: 17).
+- **Caveat:** `double_support_v2_pct` counts overlap with the opposite foot's *valid* strides only, so it reads low at pass edges and when strides are invalid (WearGait-PD mean 26.8%, vs 22.2% before the B-D3 revision; gaitpdb 23.0%). It is descriptive only and not in any model (M1 = T1-core).
+- **Note for Teammate:** the emulation config changed to 4 × [4, 5]. Regenerate the E9 inputs with `a2_09_emulation` before running `emulation.evaluate`. K_target = 15 for the K-curve.
+- **Next:** R6 insole–walkway agreement (walkway contacts vs insole events: stride, stance, swing, DS).
+
+**In plain words**
+1. We wrote the code that reads WearGait-PD and turns each walk into the same gait numbers we use for gaitpdb.
+2. We fixed the rules before seeing any labels: drop the 10 people without insoles, never touch the "freezing" column, fill only tiny 10–20 ms data gaps, and use only the straight walking parts.
+3. All 113 usable people now have enough strides (median 17), and our gaitpdb "fake WearGait walks" now have about the same number (18).
+
+**Why it matters:** the external test compares like with like, and every rule was set before anyone saw a diagnosis.
 
 ### 2026-11-22 — B1: WearGait-PD downloaded and blinded
 **Who:** Lead  **Branch/commit:** data/weargait-blind
