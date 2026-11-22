@@ -43,6 +43,85 @@ This is the shared record of everything changed or decided in this project. **Bo
 
 ## Log entries
 
+### 2026-11-22 — Teammate Day 2: Demographics, E8/E9 eval, D15 rule, frozen scoring script, figures, tests
+**Who:** Teammate (Janak Varshney)  **Branch/commit:** model/day2
+
+#### Demographics (`etx/demographics.py`, `scripts/a2_02_demographics_audit.py`, `tests/test_demographics.py`)
+- Implemented robust parser for `demographics.txt` (tolerant of ragged trailing tabs on line 161/SiCo24 and others; custom line tokenization instead of `pd.read_csv`).
+- Converted Ju heights cm → m; kept `-`/`NaN` as missing (never synthesised).
+- Cross-validated against `demographics.html` using stdlib `html.parser` (no `lxml`): 166/166 records matched 100%.
+- Noted `Juc010` extra entry in `demographics.txt` with no matching gaitpdb recording (all 165 recordings verified 1-to-1).
+- Merged `sex`, `age_y`, `speed_01_mps` into `subject_v2.csv` via `a2_03_events_features --demographics`. Only 1 missing speed: GaPt03.
+- Added Test T8 (3 assertions: no synthesis, HTML match within 2%, meters scaling).
+- Output: `outputs/day1/demographics/clean.csv` (165 rows + Juc010), `audit.csv`.
+
+#### E9 Emulation (`etx/emulation.py`, `scripts/a2_09_emulation.py`)
+- Updated emulation config to 4 segments × [4, 5] strides per segment (B-D6), K_target = 15 (B-D5).
+- Results (20 draws, S2_random, `--run-id day1`):
+  - **M1-fb** `train-full/test-K`: mean **0.6731 ± 0.0216**, median **0.6710** [0.6411, 0.7155]
+  - **M1-fb** `train-K/test-K`:   mean **0.6747 ± 0.0219**, median **0.6760** [0.6397, 0.7189]
+  - **D15 decision**: diff = 0.6760 − 0.6710 = **+0.0051 < 0.02** → **`full_walk` training chosen** (rule: use full-walk unless K-matched median AUC is ≥ 0.02 higher).
+  - **H3 internal reference (M1-fb emulated AUC)**: **0.6731 ± 0.0216** (median **0.6710**).
+  - **M1** `train-full/test-K`: 0.7930 ± 0.0130 (median 0.7918); `train-K/test-K`: 0.7997 ± 0.0141 (median 0.8012).
+
+#### E8 K-curve (`etx/kcurve.py`, `scripts/a2_08_kcurve.py`)
+- Implemented `evaluate()`: CV AUC per (scheme, K, draw, regime) for M1-fb and M1; stability stats ICC(2,1), within-SD, bias vs full, Δunivariate AUC.
+- Run `--run-id day1`: 39,930 feature table rows, 968 result rows, 60 stability rows.
+- **K-curve at K=15 (K_target)**:
+
+  | model_id | regime | mean AUC | median | SD |
+  |---|---|---|---|---|
+  | M1 | train-full/test-K | 0.7887 | 0.7905 | 0.0223 |
+  | M1 | train-K/test-K | 0.7860 | 0.7852 | 0.0213 |
+  | M1-fb | train-full/test-K | 0.6464 | 0.6480 | 0.0300 |
+  | M1-fb | train-K/test-K | 0.6409 | 0.6438 | 0.0353 |
+
+- **Stability at K=15 (mean over both schemes)**:
+
+  | feature | ICC(2,1) | within-SD | bias vs full | Δunivariate AUC |
+  |---|---|---|---|---|
+  | stride_time_mean | 0.9842 | 0.0116 | -0.0001 | -0.002 |
+  | stride_time_cv | 0.7005 | 0.4521 | -0.311 | -0.022 |
+  | swing_time_cv | 0.5669 | 1.491 | -0.478 | -0.067 |
+  | stance_pct | 0.9554 | 0.312 | +0.018 | +0.002 |
+  | asym_swing | 0.8359 | 1.336 | +0.272 | -0.004 |
+
+- Eligibility at K=15: 72 controls / 93 PD eligible across all schemes.
+
+#### E6 Internal Primary Models (`scripts/a2_06_internal_primary.py`)
+- Full 20×5 CV, inner C selection, participant-level bootstrap-of-CV CI (B=200), DeLong+LeDell CIs, internal speed-adjusted AAUC gate for M1 and M1-fb. Sex pre-encoded M→1/F→0 before imputer.
+- Results:
+
+  | Model | AUC mean ± SD [2.5%, 97.5%] | Brier | Cal slope | AAUC [CI] | Gate |
+  |---|---|---|---|---|---|
+  | M1 | 0.8244 ± 0.0075 [0.8112, 0.8363] | 0.1712 | 1.013 | 0.7169 [0.611, 0.833] | ✓ PASS |
+  | M1-fb | 0.6654 ± 0.0064 [0.6529, 0.6747] | 0.2230 | 1.043 | 0.6132 [0.511, 0.718] | ✓ PASS |
+  | M0 | 0.7703 ± 0.0039 [0.7618, 0.7743] | 0.1910 | 1.023 | — | — |
+  | M2 | 0.8418 ± 0.0084 [0.8308, 0.8547] | 0.1599 | 1.003 | — | — |
+  | X1 | 0.8587 ± 0.0163 [0.8311, 0.8824] | 0.1520 | 0.702 | — | — |
+  | AS | 0.5512 ± 0.0278 [0.4957, 0.5916] | 0.2469 | 0.390 | — | — |
+
+- Bootstrap-of-CV CIs: M1 0.8075 [0.7262, 0.8802]; M1-fb 0.6486 [0.5513, 0.7437].
+- **Both internal AAUC CIs strictly above 0.5** → both gates pass.
+
+#### Frozen Scoring Script (`scripts/c_01_frozen_scoring.py`, `tests/fixtures/fake_features.py`, `tests/test_frozen_scoring.py`)
+- Fits M1-fb and M1 on all 165 gaitpdb `_01` subjects with final frozen pipelines.
+- Reads `subject_external_v2.csv` from CLI path; scores only `qc_pass == True` rows.
+- Checks SHA-256 against freeze manifest value (`ac1fe306e2079c1531d80ae64d7784684506bf3b26f0cc002b52bf2ce4ea6a49`), halts on mismatch.
+- Strictly never reads `labels/` or takes any label input; validates absence of `label` column in input.
+- Writes `outputs/<run_id>/frozen_scores/scores_tall.csv`, `scores_wide.csv`, `frozen_manifest.json`.
+- 3 tests pass: SHA-256 mismatch fails loudly, label column fails loudly, end-to-end fake pipeline test.
+
+#### Post-Freeze Scripts (`scripts/c_02_hypothesis_testing.py`, `etx/figures.py`)
+- `c_02_hypothesis_testing.py`: H1–H3 testing with Holm-Bonferroni (M1-fb primary), separate recalibration, ROC+calibration figures.
+- `etx/figures.py`: `plot_stride_qc`, `plot_bland_altman_agreement`, `plot_drift`, `plot_roc_curves`, `plot_calibration`.
+
+#### Next steps
+- Lead merges PR, pushes `model-frozen` tag, runs `c_01_frozen_scoring.py` on the real `subject_external_v2.csv`, then runs `c_02_hypothesis_testing.py` after unblinding.
+- Figures: Lead to send `strides.csv` and `agreement/pairs.csv` column names for insole-vs-walkway plotting.
+
+---
+
 ### 2026-11-22 — B5: WearGait-PD external scoring table (Lead Phase B complete)
 **Who:** Lead  **Branch/commit:** data/external-table
 - **New:** `scripts/b_05_external_table.py`, `tests/test_external_table.py` (1 test; 114 pass).

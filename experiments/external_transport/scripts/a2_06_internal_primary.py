@@ -6,7 +6,10 @@ Run from repo root:  python -m experiments.external_transport.scripts.a2_06_inte
 import argparse
 import json
 import sys
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 import numpy as np
 import pandas as pd
@@ -153,6 +156,10 @@ def main():
     if "qc_pass" in subjects_df.columns:
         subjects_df = subjects_df[subjects_df["qc_pass"]].reset_index(drop=True)
 
+    if "sex" in subjects_df.columns:
+        # Pre-encode sex as numeric float (M -> 1.0, F -> 0.0) for model pipeline
+        subjects_df["sex"] = subjects_df["sex"].map({"M": 1.0, "F": 0.0, 1: 1.0, 0: 0.0, "1": 1.0, "0": 0.0}).astype(float)
+
     feature_sets = {
         "M1": cfg["features"]["t1_core"],
         "M1-fb": cfg["features"]["t1_fallback"],
@@ -174,6 +181,21 @@ def main():
             print(f"  Skipping {model_id}: missing columns {set(feature_cols) - set(subjects_df.columns)}")
             continue
 
+        model_json_p = metrics_out / f"{model_id}_metrics.json"
+        prev_preds_p = cv_out / "predictions.csv"
+        if model_json_p.exists() and prev_preds_p.exists():
+            try:
+                prev_preds = pd.read_csv(prev_preds_p)
+                if model_id in prev_preds["model_id"].values:
+                    print(f"  Reusing existing {model_id} metrics and predictions...")
+                    with open(model_json_p) as f:
+                        model_results = json.load(f)
+                    all_models_summary[model_id] = model_results
+                    all_preds_list.append(prev_preds[prev_preds["model_id"] == model_id])
+                    continue
+            except Exception:
+                pass
+
         rep_summary, preds_df = run_repeated_cv(subjects_df, model_id, cfg, available)
         all_preds_list.append(preds_df)
 
@@ -194,9 +216,9 @@ def main():
             "ledell_pooled": ld,
         }
 
-        # Participant-level CI for primary model M1 using bootstrap_cv
-        if model_id == "M1":
-            print("  Computing participant-level bootstrap-of-CV CI for M1 (grouped duplicates)...")
+        # Participant-level CI and internal speed-adjusted AAUC for primary models M1 and M1-fb
+        if model_id in {"M1", "M1-fb"}:
+            print(f"  Computing participant-level bootstrap-of-CV CI for {model_id} (grouped duplicates)...")
             B_boot = cfg.get("uncertainty", {}).get("bootstrap_cv_B", 500)
             C_grid = models._lr_C_grid(cfg)
 
@@ -205,9 +227,8 @@ def main():
                 for tr_i, te_i in f_splits:
                     tr = b_df.iloc[tr_i]
                     te = b_df.iloc[te_i]
-                    # Select C using train fold
-                    best_c = C_grid[len(C_grid) // 2]  # median C or fast fit
-                    p_pipe = models.make_pipeline("M1", cfg, seed=42)
+                    best_c = C_grid[len(C_grid) // 2]
+                    p_pipe = models.make_pipeline(model_id, cfg, seed=42)
                     models.set_C(p_pipe, best_c)
                     p_pipe.fit(tr[feature_cols].values, tr["label"].values)
                     p_pred.extend(p_pipe.predict_proba(te[feature_cols].values)[:, 1])
@@ -229,9 +250,11 @@ def main():
                 study_vals = subjects_df.set_index("subject_id").loc[subj_preds.index, "study"].values
                 aauc_res = metrics.aauc(all_y, mean_p, speed_vals, strata=study_vals, B=500, seed=cfg["cv"]["base_seed"])
                 model_results["speed_adjusted_aauc"] = aauc_res
-                print(f"  Internal AAUC (speed-adjusted) = {aauc_res['aauc']:.4f} [{aauc_res['ci_lower']:.4f}, {aauc_res['ci_upper']:.4f}]")
+                print(f"  Internal AAUC ({model_id}, speed-adjusted) = {aauc_res['aauc']:.4f} [{aauc_res['ci_lower']:.4f}, {aauc_res['ci_upper']:.4f}]")
                 if aauc_res["ci_lower"] <= 0.5:
-                    print("  ⚠️  INTERNAL GATE: AAUC CI includes 0.5 — report to Lead before continuing.")
+                    print(f"  ⚠️  INTERNAL GATE: {model_id} AAUC CI includes 0.5 — report to Lead before continuing.")
+                else:
+                    print(f"  ✓ INTERNAL GATE: {model_id} AAUC CI strictly above 0.5.")
 
         all_models_summary[model_id] = model_results
         auc_m = rep_summary["auc"]
