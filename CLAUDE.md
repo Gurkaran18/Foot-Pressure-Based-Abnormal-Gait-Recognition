@@ -35,7 +35,7 @@ Add new entries at the **top** of "Log entries" (newest first):
 - Splits are by **subject** only. Never split randomly by window or recording.
 - All learned preprocessing (scaling, imputation) is fitted inside the training folds only.
 - The primary gaitpdb cohort is the `_01` walk of all 165 subjects. Cued (Ju `_02`–`_07`), dual-task (Ga `_10`) and Ga `_02` recordings are excluded.
-- No code reads `labels/` (WearGait-PD diagnosis) until the `model-frozen` git tag has been pushed. Recalibration is reported separately and never replaces the primary external result.
+- No code reads `labels/` (WearGait-PD diagnosis) until the `model-frozen` git tag has been pushed. **Only exception (approved 2026-11-22):** the blinding scripts `b_01_weargait_download.py` (writes the key) and `b_04_weargait_covariates.py` (reads only the `code` and `original_subject` columns to attach speed/age/sex to codes). They never print or save anyone's group. Recalibration is reported separately and never replaces the primary external result.
 - Never use synthetic or random demographic values. UPDRS and H&Y are for description only and are never model inputs.
 
 ## 4. Protected paths and data
