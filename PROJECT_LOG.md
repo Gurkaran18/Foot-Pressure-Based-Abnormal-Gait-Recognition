@@ -29,8 +29,8 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 blinded covariates (speed/age/sex, 123/123) done |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B in progress: B1 blinding, B2 loader/features, B3 R6 agreement done (fallback triggered) |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 merged (96 tests pass). Internal M1 AUC 0.824. Pending: demographics/AAUC gate, E8–E9 evaluation. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — waiting on Teammate pre-freeze items** |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. C (freeze → unblind → H1–H3) waits on Teammate E8/E9, D15, AAUC |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,27 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-22 — B5: WearGait-PD external scoring table (Lead Phase B complete)
+**Who:** Lead  **Branch/commit:** data/external-table
+- **New:** `scripts/b_05_external_table.py`, `tests/test_external_table.py` (1 test; 114 pass).
+- **Output:** `outputs/b02_20261122/weargait/subject_external_v2.csv`, plus a `.sha256` file.
+  - Same columns as `features/subject_v2.csv` (spec §5) but **without `label`**: subject_id = WG code, study = "WG", sex M/F, age_y, speed_01_mps (= SelfPace footprint speed, B-D9), speed_method_status = walkway_footprint, the v2 features, n_valid_L/R, qc_pass, qc_flags, has_insole, source_recordings.
+- **Result:** 123 rows; 113 qc_pass (10 without insoles kept as qc_pass = False); 0 missing values in the qc_pass rows. sha256 `ac1fe306e2079c1531d80ae64d7784684506bf3b26f0cc002b52bf2ce4ea6a49`.
+- **How scoring will run:** this file is derived from WearGait-PD and stays outside git (CLAUDE.md §4). The Teammate's frozen scoring script will be merged to `main` and **run on the Lead's machine** after the `model-frozen` tag. The tag commit should record the sha256 above, so the scored table is provably the one fixed before unblinding.
+- **Next (Teammate, before the freeze):**
+  1. rerun E9 with emulation 4 × [4, 5];
+  2. E8/E9 for M1-fb and M1;
+  3. the D15 rule;
+  4. demographics/AAUC gate;
+  5. a frozen-model fit + scoring script that reads `subject_external_v2.csv`, uses `qc_pass` rows only, and never reads `labels/`.
+
+**In plain words**
+1. We made the final WearGait-PD table: one row per person, with gait numbers, speed, age and sex, but no diagnosis.
+2. We saved its fingerprint (sha256), so later anyone can check it wasn't changed after we saw the labels.
+3. My side of Day 2 is done; now Janak's pre-freeze work decides when we can freeze and unblind.
+
+**Why it matters:** the external test will score exactly this table, which was fixed before anyone saw who has Parkinson's.
 
 ### 2026-11-22 — B4: blinded WearGait-PD covariates (speed, age, sex); `labels/` exception
 **Who:** Lead  **Branch/commit:** data/weargait-covariates
