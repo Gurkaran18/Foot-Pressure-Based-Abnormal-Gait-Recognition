@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. Next: D (exploratory) + write-up |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Next: write-up |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,40 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — D1: post-unblinding sensitivity analyses (EXPLORATORY): the null result is robust
+**Who:** Lead  **Branch/commit:** data/d1-sensitivity
+- **New:** `scripts/d_01_sensitivity.py` (run `d_sensitivity`; outputs `sensitivity/auc_table.csv`, `results.json`). It is exploratory and done after the freeze; it **never replaces** the frozen result. Frozen models are refitted with the frozen code and checked against `frozen_manifest.json` (coefficients identical to 1e-9).
+- **Why:** to test whether "the gaitpdb model does not transport" could come from a bug or a single analysis choice: device, trial, stride count, QC, or patient mix.
+- **Results (AUC [95% DeLong CI]; reference: frozen M1-fb 0.470 [0.357, 0.582], M1 0.385):**
+  - **S1, signal inside WearGait-PD** (20 × 5-fold CV, trained on WearGait-PD itself):
+    - The M1-fb features reach 0.449 (2.5–97.5%: 0.411–0.472), and the fitted coefficients are ≈ 0. **Stride-time features carry no PD information in WearGait-PD at all.**
+    - M1 reaches 0.661, but only through stance % with a **reversed** sign (PD lower).
+    - Univariate AUCs (PD high): stride CV 0.47, swing CV 0.40, stance % 0.28, **speed 0.60**, **age 0.12**.
+  - **S2, repeat trials:**
+    - SelfPace_mat: M1-fb 0.574 [0.34, 0.81] (n = 29). SelfPace_matTURN: 0.425 [0.25, 0.60] (n = 45). Few people pass QC on these trials (short walks).
+    - **Mean of all QC-passing trials: M1-fb 0.470, M1 0.379.**
+  - **S3, device:**
+    - Walkway-derived stride features on SelfPace (all 123, including the no-insole trials): M1-fb **0.391** [0.29, 0.49]. The walkway is no better than the insoles, so the insoles are not the reason.
+    - On the `_mat` trials the walkway gives 0.61–0.66, but people stand and **turn on the mat** in those trials (checked: Turn/Standing samples on the mat). The walkway "strides" there include turning steps, which is a different construct (turning), not comparable.
+  - **S4, data choices:** ≥ 15 valid strides/foot: 0.424 (n = 81). 4 passes and below-median missing data: 0.351 (n = 55).
+  - **S5, case-mix:**
+    - PD without DBS 0.397. Medication ON 0.478, OFF 0.495 (12 PD). H&Y ≥ 2.5: 0.575 [0.43, 0.72]. No assistive device: 0.461.
+    - **Age:** WearGait-PD controls are **12 years older** than its PD group (median 78.5 vs 67). In gaitpdb the controls are slightly younger (64 vs 68; age AUC 0.59 vs 0.12 in WearGait-PD). The frozen M1-fb score rises with age in WearGait-PD controls (Spearman ρ = 0.29).
+    - Age-matched 1:1 (caliper 3 years, n = 52, median age 74 in both groups): M1-fb **0.572** [0.41, 0.73]. Age-adjusted AAUC 0.666 [0.44, 0.82]. Both are higher than the unadjusted value, but the CIs include 0.5.
+- **Conclusion:**
+  - The confirmatory conclusion **holds in every variation**. No device, trial, stride-count, QC or medication choice gives the frozen model a discrimination clearly above chance on straight walking.
+  - **A plausible partial explanation (exploratory, not proven):** age case-mix is reversed between the datasets. WearGait-PD's much older controls walk more variably, which masks or reverses the gaitpdb PD markers. Age-matched estimates move upward but stay uncertain.
+  - Turning on the walkway may carry PD signal (a hypothesis for future work).
+- **Tests:** no change to tested modules (117 pass). This is an analysis script; checks are built in (manifest coefficient match, training-table SHA).
+- **Next:** Day 3 write-up. Report the confirmatory result first, then this table as a sensitivity analysis, with the fixed R1 wording.
+
+#### In plain words
+1. We tried many fair variations (other walks, more steps, stricter quality rules, the walkway instead of the insoles, leaving out patients with brain stimulators, medication on or off). The model never worked. So the result is real, not a bug.
+2. Even a model trained *inside* WearGait-PD can't separate patients from controls using stride timing, so the signal isn't there in this dataset.
+3. A likely reason: WearGait-PD's healthy people are about 12 years older than its patients. Older people walk more unevenly, which hides the Parkinson's pattern. When we compared people of the same age, the model did a bit better, but not clearly.
+
+**Why it matters:** an examiner's first question will be "are you sure it's not your code?" This answers it, and gives a sensible, honest explanation of *why* the transfer failed.
 
 ### 2026-11-23 — UNBLINDED: confirmatory results H1–H3 (frozen M1-fb), primary external result
 **Who:** Lead  **Branch/commit:** run `c_frozen`; code = tag `model-frozen` (no changes under `experiments/` since the tag)
