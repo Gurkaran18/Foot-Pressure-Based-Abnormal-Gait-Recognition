@@ -57,3 +57,6 @@ experiments/external_transport/outputs/
 weargait*/
 WearGait*/
 *.parquet
+
+# slide decks with names / roll numbers stay local (public repo)
+/*.pptx

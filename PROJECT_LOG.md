@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results, introduction and related work drafted (`research/writeup/`); diagnosis = site in the external set (noted). Next: slides, viva notes |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results, introduction and related work drafted (`research/writeup/`); diagnosis = site in the external set (noted). Slides built (local deck). Next: viva notes, visual check of the deck |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,43 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — Slides: 14-slide results deck (Teammate Day 3 item, done by Lead)
+**Who:** Lead (Janak unavailable)  **Branch/commit:** data/slides
+- **New:**
+  - `research/writeup/build_deck.js` (pptxgenjs generator; team names are passed at build time).
+  - Local, uncommitted `Gait-Transport-Results-Deck.pptx` in the repo root, next to the old deck. It holds names and roll numbers, so `/*.pptx` is now git-ignored.
+- **Design:** same style as `MSCAF-Gait-Major-Project-Review.pptx`: dark purple title slides, Cambria/Calibri, teal accent, kicker label above a 24 pt title, 16:9. Speaker notes with timings on every slide (≈ 17 min).
+- **Flow (one message per slide):**
+  1. Title.
+  2. The answer up front (0.67 → 0.47, gap 0.20).
+  3. The problem: leakage 99.6 → 82.3%; only 6% of studies test on another dataset.
+  4. The two datasets.
+  5. Study design (blind → freeze → unblind) and H1–H3.
+  6. Features and models.
+  7. Device check → M1-fb primary.
+  8. Internal results and emulation (native bar chart).
+  9. Confirmatory results (ROC plus H1–H3 table).
+  10. "Is it a bug?" (forest plot plus within-WearGait-PD 0.45).
+  11. Why it failed (age figure plus diagnosis = site).
+  12. What we learned.
+  13. Limitations and next steps.
+  14. Thanks.
+- **Checks:**
+  - `validate.py` passes.
+  - Text-fit estimated per box; titles kept to ≤ 50 characters, like the old deck.
+  - Overlap and off-slide checks are clean.
+  - Image aspect ratios are preserved.
+  - Slide 1 rendered with macOS Quick Look (which led to left-aligning titles).
+  - **No full visual render:** LibreOffice is not installed and installing it was blocked. The deck must be opened once in PowerPoint or Google Slides to check slides 2–14 visually.
+- **Open:** the title slide uses the team line from the old deck (Gurkaranbir Singh, Ojasvi, Alanka Vasanth Kumar; guide Dr. Kunwar Pal). Confirm the names, and whether Janak should be added.
+
+#### In plain words
+1. We made the presentation for the viva: 14 slides in the same look as our earlier deck, with what to say written under each slide.
+2. It tells the story in order: the question, how we kept the test honest, the result, the checks that show it's not a bug, and why it failed.
+3. The file stays on the laptop, not on GitHub, because it has our names and roll numbers.
+
+**Why it matters:** the viva is where the work is judged. The deck leads with the answer and backs every claim with a figure or number from our runs.
 
 ### 2026-11-23 — Write-up: introduction and related work; site entanglement added to the results
 **Who:** Lead (doing Teammate Day 3 items; Janak unavailable)  **Branch/commit:** data/writeup-intro
