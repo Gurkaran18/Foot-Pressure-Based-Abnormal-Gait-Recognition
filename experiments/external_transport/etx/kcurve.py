@@ -1,6 +1,14 @@
 """K-curve: S1/S2 stride sampling + K-stride feature tables (Lead) and evaluation (Teammate).
 
 Owner: Lead (samplers, feature tables) / Teammate (evaluate). Spec §4, R4; decision D7.
+
+S1_contiguous: pick a random start time = heel strike of a valid stride (either foot) such that each foot
+               still has >= K valid strides from there; take the next K valid strides of each foot.
+               Mimics one continuous stretch of walking.
+S2_random:     K valid strides per foot drawn at random without replacement (sensitivity scheme).
+K = "all":     every valid stride (the full-walk reference).
+A subject is eligible for (scheme, K) only if both feet have enough valid strides; ineligible subjects
+are reported in the eligibility counts, never padded.
 """
 import hashlib
 from pathlib import Path
@@ -114,12 +122,8 @@ def evaluate(feature_tables_df: pd.DataFrame, cfg: dict, full_subjects_df=None, 
     if full_subjects_df is None:
         full_df = feature_tables_df[feature_tables_df["K"] == "all"].copy()
         if len(full_df) == 0:
-            # Load from outputs
-            candidates = sorted(paths.OUTPUTS_DIR.glob("*/features/subject_v2.csv"))
-            if candidates:
-                full_df = pd.read_csv(candidates[-1])
-            else:
-                raise ValueError("Full-walk subject table not found for K-curve evaluation.")
+            # Pre-freeze fix 5: no "latest folder" guess; pass full_subjects_df explicitly.
+            raise ValueError("No K='all' rows and no full_subjects_df given for K-curve evaluation.")
     else:
         full_df = full_subjects_df.copy()
 
