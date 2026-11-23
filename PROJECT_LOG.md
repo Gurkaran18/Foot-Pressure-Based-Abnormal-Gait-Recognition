@@ -43,6 +43,13 @@ This is the shared record of everything changed or decided in this project. **Bo
 
 ## Log entries
 
+### 2026-11-23 — Slides: Janak roll number added
+**Who:** Lead  **Branch/commit:** data/slides-rollnumber
+- **Changed:** `Gait-Transport-Results-Deck.pptx` (slide 1 title line).
+- **Why:** Janak's enrollment number (23103071) was missing from the team attribution.
+- Added to the deck via `research/writeup/build_deck.js` with `DECK_AUTHORS` env var, rebuilt and validated (all checks passed).
+- **In plain words:** The slide title now reads "Gurkaranbir Singh (23103059) · Janak Varshney (23103071)" with the guide and department line.
+
 ### 2026-11-23 — Viva notes: likely questions with short answers
 **Who:** Lead (Teammate Day 3 item; Janak unavailable)  **Branch/commit:** data/viva-notes
 - **New:** `research/writeup/VIVA_NOTES.md`. It contains a 30-second summary, the numbers to know by heart, and about 40 likely questions with one- or two-sentence answers, in 10 groups: motivation, data, method, freeze and statistics, results, robustness, interpretation, process and integrity, and future work. Each answer points to the slide or write-up section to show.
