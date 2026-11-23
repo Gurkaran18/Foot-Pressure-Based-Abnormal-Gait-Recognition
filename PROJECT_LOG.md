@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results draft written (`research/writeup/RESULTS.md`). Next: Teammate review, related work, slides |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results, introduction and related work drafted (`research/writeup/`); diagnosis = site in the external set (noted). Next: slides, viva notes |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,32 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — Write-up: introduction and related work; site entanglement added to the results
+**Who:** Lead (doing Teammate Day 3 items; Janak unavailable)  **Branch/commit:** data/writeup-intro
+- **New:** `research/writeup/INTRODUCTION_RELATED_WORK.md`. It contains the introduction (background, problem, aim, design, 4 contributions) and related work in 7 topics: PD gait markers, ML on gaitpdb, evaluation pitfalls, external validation and shift, WearGait-PD, the gap we address, statistical methods. It has 27 references.
+- **Reference checks:**
+  - Read for this entry: the WearGait-PD paper (Anderson et al. 2026, PMC full text), Sifat et al. arXiv:2610.16220 (HTML v1), Callisaya et al. 2010 (bibliographic record and abstract) and Frenkel-Toledo et al. 2005 (PMC).
+  - The other 2026 gaitpdb papers come from the graded review in `RESEARCH_EXTENSION_PLAN.md`; preprints are marked. The classic methods references are standard.
+- **New fact that changes the interpretation** (from [1] and [19], checked against our own key mapping):
+  - WearGait-PD ID prefixes are recruitment sites: NLS = Johns Hopkins Outpatient Center, HC = Johns Hopkins Bayview, WPD/WHC = VA Puget Sound.
+  - Our release has only NLS (all 72 PD) and HC (all 51 controls), so **diagnosis and site coincide completely** in our external set.
+  - Sifat et al.: site alone predicts diagnosis with AUC 0.955 using walkway metrics; cross-site transport 0.576.
+  - The WearGait-PD paper reports site-specific insole timing delays and controls older than PD (74 ± 9 vs 67 ± 8).
+- **`RESULTS.md` updated:**
+  - Summary: age, site and diagnosis cannot be separated.
+  - Cohort section: a site bullet.
+  - Interpretation: site makes the case-mix explanation unavoidable but unresolvable.
+  - Limitation 2: no within-site estimate is possible; a release including VA Puget Sound, which recruited both PD and controls, would allow one.
+  - The confirmatory results are unchanged.
+- **Next:** slides (existing deck) and viva notes, also Teammate items.
+
+#### In plain words
+1. We wrote the opening chapters: why gait and foot pressure, why so many published results don't hold up, what we set out to test, and how other researchers have approached it.
+2. While checking sources we found that in WearGait-PD every patient came from one hospital site and every healthy person from another. So "patient vs healthy" is also "site A vs site B".
+3. That's why the healthy group is so much older, and it means we can't fully separate disease from site. The write-up now says so plainly.
+
+**Why it matters:** an examiner who knows the dataset will ask about this. We now answer it ourselves, with sources.
 
 ### 2026-11-23 — Write-up: results and discussion draft, cohort table, report figures
 **Who:** Lead  **Branch/commit:** data/writeup-results
