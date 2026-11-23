@@ -281,8 +281,11 @@ def aauc(
     strata: np.ndarray = None,
     B: int = 500,
     seed: int = 42,
+    return_draws: bool = False,
 ) -> dict:
     """Janes & Pepe covariate-adjusted AUC with bootstrap CI.
+
+    return_draws=True adds 'draws' (the bootstrap AAUC values) for a one-sided bootstrap p (H2).
 
     Within each study/stratum, model score ~ speed in CONTROLS (linear),
     standardise residuals, case placement value = share of control residuals
@@ -333,10 +336,13 @@ def aauc(
     else:
         ci_lower, ci_upper, se = float("nan"), float("nan"), float("nan")
 
-    return {
+    out = {
         "aauc": point_aauc,
         "se": se,
         "ci_lower": ci_lower,
         "ci_upper": ci_upper,
         "B": B,
     }
+    if return_draws:
+        out["draws"] = np.asarray(boot_vals, float)
+    return out

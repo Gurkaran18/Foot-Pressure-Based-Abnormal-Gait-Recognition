@@ -1,8 +1,17 @@
 """Pseudo-SelfPace walks (4 segments x 4-5 consecutive valid strides) built from gaitpdb walks.
 
 Owner: Lead (walk construction, feature tables) / Teammate (evaluate). Spec §4, R1/R4; decision D7.
+
+WearGait-PD SelfPace = 4 passes over a 16-ft walkway. Each emulated walk, per foot:
+  1. drop turn-adjacent strides: valid strides whose previous or next stride (by stride_idx) is
+     invalid or missing (turns/pauses at the walkway ends are what invalid strides mostly are);
+  2. find runs of consecutive remaining strides (consecutive stride_idx);
+  3. place 4 non-overlapping segments, each of 4 or 5 consecutive strides (length drawn per segment,
+     config emulation.strides_per_segment, B-D6), inside those runs at random positions.
+Returns None if a foot cannot host 4 segments. Feet are sampled independently (documented limitation).
 """
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -102,13 +111,9 @@ def evaluate(feature_tables_df: pd.DataFrame, cfg: dict, full_subjects_df=None, 
     base_seed = cfg["cv"]["base_seed"]
 
     if full_subjects_df is None:
-        candidates = sorted(paths.OUTPUTS_DIR.glob("*/features/subject_v2.csv"))
-        if candidates:
-            full_df = pd.read_csv(candidates[-1])
-        else:
-            raise ValueError("Full-walk subject table not found for emulation evaluation.")
-    else:
-        full_df = full_subjects_df.copy()
+        # Pre-freeze fix 5: the full-walk table must be passed explicitly (no "latest folder" guess).
+        raise ValueError("full_subjects_df (gaitpdb subject_v2 table) must be passed explicitly.")
+    full_df = full_subjects_df.copy()
 
     model_configs = {
         "M1-fb": cfg["features"]["t1_fallback"],
@@ -219,12 +224,83 @@ def evaluate(feature_tables_df: pd.DataFrame, cfg: dict, full_subjects_df=None, 
         "auc_ci_upper": summary[h3_regime_key]["p97_5"],
     }
 
+    # Pre-freeze fix 3: internal bootstrap-of-CV distribution for the H3 gap (A1.1 R5 table: the gap CI
+    # combines the internal bootstrap-of-CV and the external bootstrap distributions independently).
+    boot_B = cfg.get("uncertainty", {}).get("h3_internal_B")
+    boot_rows = []
+    if boot_B:
+        h3_regime = "train-K/test-K" if d15_decision == "k_matched" else "train-full/test-K"
+        for model_id, key in (("M1-fb", "h3_internal_reference_m1_fb"), ("M1", "h3_internal_reference_m1")):
+            vals = internal_bootstrap(feature_tables_df, full_df, cfg, model_id, h3_regime, int(boot_B))
+            boot_rows.append(vals.assign(model_id=model_id, regime=h3_regime))
+            ref = summary.get(key) or {"regime": f"{model_id}_{h3_regime}",
+                                       "auc_mean": summary[f"{model_id}_{h3_regime}"]["mean"],
+                                       "auc_median": summary[f"{model_id}_{h3_regime}"]["median"],
+                                       "auc_std": summary[f"{model_id}_{h3_regime}"]["std"]}
+            a = vals["auc"].to_numpy()
+            ref["bootstrap"] = {"B": int(len(a)), "mean": float(a.mean()), "se": float(a.std(ddof=1)),
+                                "ci_lower": float(np.percentile(a, 2.5)), "ci_upper": float(np.percentile(a, 97.5)),
+                                "file": "h3_internal_bootstrap.csv"}
+            summary[key] = ref
+
     if out_dir is not None:
         out_p = Path(out_dir)
         out_p.mkdir(parents=True, exist_ok=True)
+        if boot_rows:
+            safe_write(out_p / "h3_internal_bootstrap.csv", pd.concat(boot_rows).to_csv(index=False))
         safe_write(out_p / "results.csv", results_df.to_csv(index=False))
         safe_write(out_p / "summary.json", json.dumps(summary, indent=2))
         print(f"[E9] Emulation results written -> {out_p / 'results.csv'}")
         print(f"[E9] Emulation summary written -> {out_p / 'summary.json'}")
 
     return results_df, summary
+
+
+def _fit_predict(train_X, train_y, test_X, model_id, cfg, seed):
+    pipe = models.make_pipeline(model_id, cfg, seed=seed)       # same fixed-C procedure as evaluate()
+    pipe.fit(train_X, train_y)
+    return pipe.predict_proba(test_X)[:, 1]
+
+
+def internal_bootstrap(feature_tables_df, full_df, cfg, model_id, regime, B):
+    """Bootstrap-of-CV distribution of the emulated AUC (H3 internal term).
+
+    B replicates spread evenly over the emulation draws (so stride-sampling and subject-sampling
+    variability both enter). Each replicate = uncertainty.bootstrap_cv on that draw: subjects resampled
+    with replacement, folds assigned on unique subjects (duplicates stay in one fold), CV refitted,
+    pooled out-of-fold AUC. train-full regime: the training rows take the subject's full-walk features.
+    Returns DataFrame(draw, b, auc).
+    """
+    from . import uncertainty
+    feats = list(cfg["features"]["t1_fallback" if model_id == "M1-fb" else "t1_core"])
+    full = full_df.drop_duplicates("subject_id").set_index("subject_id")
+    draws = sorted(feature_tables_df["draw"].unique())
+    per = int(np.ceil(B / len(draws)))
+    out = []
+    for d in draws:
+        dd = feature_tables_df[feature_tables_df["draw"] == d].dropna(subset=feats).reset_index(drop=True)
+        seed = draw_seed(cfg["cv"]["base_seed"], "h3boot", d)
+
+        def run_cv(boot_df, fold_splits):
+            y_all, p_all = [], []
+            for tr, te in fold_splits:
+                trd, ted = boot_df.iloc[tr], boot_df.iloc[te]
+                if trd["label"].nunique() < 2:
+                    continue
+                Xtr = (full.loc[trd["subject_id"], feats].to_numpy() if regime == "train-full/test-K"
+                       else trd[feats].to_numpy())
+                p_all.extend(_fit_predict(Xtr, trd["label"].to_numpy(), ted[feats].to_numpy(),
+                                          model_id, cfg, seed))
+                y_all.extend(ted["label"].to_numpy())
+            return roc_auc_score(y_all, p_all) if len(set(y_all)) == 2 else np.nan
+
+        vals = []
+        rng_seed = int(seed % (2 ** 31))
+        for b in range(per):
+            with warnings.catch_warnings():          # B=1 -> sd undefined; only the value is used
+                warnings.simplefilter("ignore", RuntimeWarning)
+                r = uncertainty.bootstrap_cv(run_cv, dd, B=1, seed=rng_seed + 1000 * b, k=cfg["cv"]["outer_folds"])
+            vals.append(r["mean"])
+        out.append(pd.DataFrame({"draw": d, "b": range(per), "auc": vals}))
+    res = pd.concat(out, ignore_index=True).dropna(subset=["auc"])
+    return res.head(B).reset_index(drop=True)

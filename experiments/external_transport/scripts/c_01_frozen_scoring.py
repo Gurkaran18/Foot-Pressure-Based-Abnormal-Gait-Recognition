@@ -37,20 +37,21 @@ def compute_sha256(filepath: Path) -> str:
     return h.hexdigest()
 
 
-def select_best_C(pipe, X, y, C_grid, cfg, seed):
-    """Inner CV to select optimal C on training set."""
+def select_best_C(model_id, X, y, study, C_grid, cfg, seed):
+    """Inner CV (log loss) to select C on the training set; folds stratified label x study as in a2_06."""
     best_c, best_ll = C_grid[len(C_grid) // 2], float("inf")
     inner_splits = list(splits.inner_folds(
-        pd.DataFrame({"subject_id": range(len(y)), "label": y}),
+        pd.DataFrame({"subject_id": range(len(y)), "label": y, "study": study}),
         k=cfg["cv"].get("inner_folds", 5),
         seed=seed,
+        strata=cfg["cv"].get("strata"),
     ))
     for C in C_grid:
         lls = []
         for it_ids, iv_ids in inner_splits:
             X_tr, y_tr = X[it_ids], y[it_ids]
             X_val, y_val = X[iv_ids], y[iv_ids]
-            p_tmp = models.make_pipeline("M1", cfg, seed=seed)
+            p_tmp = models.make_pipeline(model_id, cfg, seed=seed)
             models.set_C(p_tmp, C)
             p_tmp.fit(X_tr, y_tr)
             prob_iv = np.clip(p_tmp.predict_proba(X_val)[:, 1], 1e-9, 1.0 - 1e-9)
@@ -69,7 +70,7 @@ def fit_frozen_pipeline(model_id, train_df, feature_cols, cfg, seed):
     C_grid = models._lr_C_grid(cfg)
 
     pipe = models.make_pipeline(model_id, cfg, seed=seed)
-    best_c = select_best_C(pipe, X, y, C_grid, cfg, seed)
+    best_c = select_best_C(model_id, X, y, train_df["study"].values, C_grid, cfg, seed)
     models.set_C(pipe, best_c)
     pipe.fit(X, y)
 
@@ -95,7 +96,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="C1: Frozen Model Fitting and External Scoring")
     parser.add_argument("--external-csv", required=True, help="Path to subject_external_v2.csv")
     parser.add_argument("--run-id", default="day2")
-    parser.add_argument("--train-csv", default=None, help="Path to gaitpdb subject_v2.csv")
+    parser.add_argument("--train-csv", required=True,
+                        help="Path to the gaitpdb subject_v2.csv the frozen model is trained on (recorded by SHA-256)")
+    parser.add_argument("--expected-train-sha256", default=None,
+                        help="If given (as at the freeze), stop unless the training table matches")
+    parser.add_argument("--expected-n-train", type=int, default=165, help="Primary cohort size (CLAUDE.md §3)")
     parser.add_argument("--expected-sha256", default=EXPECTED_EXTERNAL_SHA256)
     parser.add_argument("--allow-sha-mismatch", action="store_true", help="Allow test run on fake table")
     args = parser.parse_args(argv)
@@ -142,19 +147,21 @@ def main(argv=None):
     scored_cohort = ext_df[ext_df["qc_pass"]].copy().reset_index(drop=True)
     print(f"Loaded external table: {len(ext_df)} rows, {len(scored_cohort)} passing QC for scoring.")
 
-    # Load training table (gaitpdb subject_v2.csv)
-    if args.train_csv:
-        train_path = Path(args.train_csv)
-    else:
-        candidates = sorted(paths.OUTPUTS_DIR.glob("*/features/subject_v2.csv"))
-        if not candidates:
-            raise FileNotFoundError("Training subject_v2.csv not found.")
-        train_path = candidates[-1]
-
-    print(f"Training on gaitpdb cohort: {train_path}")
+    # Load training table (gaitpdb subject_v2.csv) -- explicit path only (pre-freeze fix 5)
+    train_path = Path(args.train_csv)
+    train_sha = compute_sha256(train_path)
+    if args.expected_train_sha256 and train_sha != args.expected_train_sha256:
+        raise RuntimeError(f"Training table SHA-256 mismatch: {train_sha} != {args.expected_train_sha256}")
+    print(f"Training on gaitpdb cohort: {train_path} (sha256 {train_sha})")
     train_df = pd.read_csv(train_path)
     if "qc_pass" in train_df.columns:
         train_df = train_df[train_df["qc_pass"]].reset_index(drop=True)
+    if train_df["subject_id"].duplicated().any():
+        raise ValueError("Training table has duplicate subject_id rows (one row per subject expected).")
+    if len(train_df) != args.expected_n_train:
+        raise ValueError(f"Training cohort has {len(train_df)} subjects, expected {args.expected_n_train}.")
+    if not set(train_df["label"].unique()) <= {0, 1}:
+        raise ValueError("Training labels must be 0/1.")
 
     seed = cfg["cv"]["base_seed"]
 
@@ -196,6 +203,8 @@ def main(argv=None):
     manifest = {
         "external_table_path": str(ext_path),
         "external_sha256": actual_sha,
+        "train_table_path": str(train_path),
+        "train_sha256": train_sha,
         "n_external_total": int(len(ext_df)),
         "n_external_scored": int(len(scored_cohort)),
         "primary_model": meta_m1_fb,

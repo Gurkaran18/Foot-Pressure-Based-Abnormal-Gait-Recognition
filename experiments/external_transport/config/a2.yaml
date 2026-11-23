@@ -36,6 +36,7 @@ models:
            subsample: 0.8, colsample_bytree: 0.8, min_child_weight: 2}
 uncertainty:
   bootstrap_cv_B: 500
+  h3_internal_B: 2000     # bootstrap-of-CV replicates of the emulated AUC (H3 internal term)
   ledell_ic: true
 kcurve:
   levels: [5, 8, 10, 15, 20, 25, all]

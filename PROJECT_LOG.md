@@ -29,8 +29,8 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — pre-freeze fixes pending (see 2026-11-23 review)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). C (freeze → unblind → H1–H3) waits on the pre-freeze fixes listed in the 2026-11-23 review entry |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — pre-freeze fixes done (PR pending Teammate review), then freeze** |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 done 2026-11-23 (awaiting Teammate review). Next: C = freeze → score → unblind → H1–H3 |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,43 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — Pre-freeze fixes 1–5 to the scoring and hypothesis-test code (Lead, approved by Lead)
+**Who:** Lead  **Branch/commit:** data/prefreeze-fixes
+- **Why:** the 2026-11-23 review of PR #11 found that the post-freeze test script (`c_02`) did not follow the protocol and would also have crashed. The training table was chosen by guessing. The `model-frozen` tag must lock correct analysis code. These files are Teammate modules; the Lead fixed them with Lead approval on Day 3, and they go to Janak for review.
+- **Fix 1, H1** (`scripts/c_02_hypothesis_testing.py`, rewritten): one-sided **DeLong z-test** of AUC = 0.5 (A1.1 R10). A label-stratified bootstrap p is kept as a check only.
+- **Fix 2, H2:**
+  - AAUC of the frozen **linear predictor** (R2.2), adjusted for walkway speed. One-sided p from the **bootstrap draws** (B = 2,000); `metrics.aauc(..., return_draws=True)` is a new option. This removes the made-up 0.001 / 0.5 fallback.
+  - A speed-overlap precondition. If the ranges don't overlap, H2 is "not testable" and stays in Holm with p = 1 (conservative).
+  - "H2 is interpreted only if H1 is rejected" (D14) is recorded in the output.
+- **Fix 3, H3:**
+  - No hard-coded fallback numbers. The script fails if the reference is missing.
+  - The gap distribution combines independently the **internal bootstrap-of-CV draws** of the emulated AUC with the external stratified bootstrap draws (A1.1 R5 table). One-sided p = share of gap draws ≤ 0.
+  - New `emulation.internal_bootstrap()`: 2,000 replicates spread over the 20 draws, each one `uncertainty.bootstrap_cv` (subjects resampled, CV refitted). Written to `emulation/h3_internal_bootstrap.csv`. New config key `uncertainty.h3_internal_B: 2000`.
+- **Fix 4, labels:** `c_02` reads only `code`, `group` and `task` from the key and keeps the SelfPace row only, so there is **one row per code**. Every scored code must have a label.
+  - It also reports the B-D1 group split of the codes that were not scored.
+  - It **refuses to run unless the `model-frozen` git tag exists**, and checks that the external table's SHA-256 matches the one scored at the freeze.
+- **Fix 5, training table:**
+  - `c_01 --train-csv` is now required. Its SHA-256 is recorded in `frozen_manifest.json` and can be pinned with `--expected-train-sha256`. The script checks for 165 subjects, unique IDs and 0/1 labels.
+  - `emulation.evaluate` and `kcurve.evaluate` no longer guess "the latest folder".
+- **Also fixed:**
+  - `c_02` called `metrics.delong_ci`, which doesn't exist, and used wrong calibration keys, so it would have crashed. Both are fixed.
+  - `c_01` C-selection now uses the model's own pipeline and inner folds stratified label × study, as in `a2_06`.
+  - The scoring tests use fake training tables in a temporary folder, so they no longer read or write the real `outputs/`.
+  - The Lead's sampler docstrings in `kcurve.py`/`emulation.py` are restored.
+- **Tests:** `test_frozen_scoring.py` has 4 tests (+1: training-table checks). New `test_hypothesis_testing.py` has 3 tests on a fake key with 3 rows per code. **117 pass, 7 skipped.**
+- **Real run** `c_prefreeze` (gaitpdb table SHA `f382c26c…`, identical features to `day1_block3`):
+  - Emulation feature tables are byte-identical to `day2_emulation45`. **D15 = full-walk** (+0.0051). **H3 reference M1-fb = 0.6731** (unchanged).
+  - Internal bootstrap-of-CV: M1-fb mean 0.659, SE 0.055, 95% [0.549, 0.759]; M1 mean 0.777, SE 0.044, [0.682, 0.855]. The bootstrap mean sits slightly below the point estimate, as in `a2_06` (0.8075 vs 0.8244). Using it uncentred is conservative for H3.
+- **Still open (not blocking):** emulation uses fixed C = 1.0 while the frozen model tunes C (documented deviation). There's also a log/code mismatch in output file names in the PR #11 entry.
+- **Next:** Janak reviews this PR. Then the freeze: tag `model-frozen` recording external SHA `ac1fe306…`, train SHA `f382c26c…` and emulation summary SHA `7d21eb9e…`. Then `c_01` scoring, then unblinding, then `c_02`.
+
+#### In plain words
+1. The final-test script now runs the three tests exactly as our protocol says, and it can't make up a number if something is missing.
+2. Each WearGait-PD person is counted once, and the script won't even start before the model is officially frozen.
+3. The model will be trained on one named, fingerprinted gaitpdb table, so anyone can check exactly what it learned from.
+
+**Why it matters:** after the freeze we can't change how we test. Now the tests we lock in are the right ones.
 
 ### 2026-11-23 — Lead review of PR #11 (Teammate Day 2): approved and merged
 **Who:** Lead  **Branch/commit:** 0f1af35 (merge of model/day2)
