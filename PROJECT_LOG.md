@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results, introduction and related work drafted (`research/writeup/`); diagnosis = site in the external set (noted). Slides built (local deck). Next: viva notes, visual check of the deck |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results, introduction and related work drafted (`research/writeup/`); diagnosis = site in the external set (noted). Slides built (local deck); viva notes written. Next: rehearsal, visual check of the deck |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,19 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — Viva notes: likely questions with short answers
+**Who:** Lead (Teammate Day 3 item; Janak unavailable)  **Branch/commit:** data/viva-notes
+- **New:** `research/writeup/VIVA_NOTES.md`. It contains a 30-second summary, the numbers to know by heart, and about 40 likely questions with one- or two-sentence answers, in 10 groups: motivation, data, method, freeze and statistics, results, robustness, interpretation, process and integrity, and future work. Each answer points to the slide or write-up section to show.
+- It covers the hard questions: the "sign error?" check for M1 0.385, "why not recalibrate", "is 113 enough", "is it a bug", "did you peek", the site/age confound, deviations, and who did what.
+- All numbers are copied from logged runs; no new analysis.
+- **Next:** rehearse. Open the deck once to check slides 2–14 visually.
+
+#### In plain words
+1. We wrote the questions examiners are most likely to ask, with short, honest answers and where to point on the slides.
+2. It includes the awkward questions (is it a bug? did you look at the answers early? why did one model go below chance?), so we're not caught off guard.
+
+**Why it matters:** clear, consistent answers backed by the logged numbers show the examiners we understand and trust our own work.
 
 ### 2026-11-23 — Slides: title-slide team line corrected
 **Who:** Lead  **Branch/commit:** data/slides-team
