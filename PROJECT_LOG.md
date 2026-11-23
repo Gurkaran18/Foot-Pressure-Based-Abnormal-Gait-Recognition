@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Next: score → unblind → H1–H3 |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored 2026-11-23 (113, `c_frozen`). Next: unblind → H1–H3 |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,26 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — Frozen scoring of WearGait-PD (c_01, label-free, after the tag)
+**Who:** Lead  **Branch/commit:** run `c_frozen` on tag `model-frozen` (3cfa8ac)
+- Ran `c_01_frozen_scoring` exactly as in `FREEZE_RECORD.md`. External SHA verified (`ac1fe306…`), training SHA verified (`f382c26c…`). 123 rows, **113 scored** (`qc_pass`).
+- **Frozen models** (fitted on 165 subjects: 93 PD, 72 controls):
+  - **M1-fb:** C = 1.0, intercept 0.340. Standardised coefficients: stride_time_mean −0.029, stride_time_cv **+0.889**.
+  - **M1:** C = 0.316, intercept 0.596. Coefficients: stride_time_mean −0.069, stride_time_cv 0.214, swing_time_cv 0.803, stance_pct 0.605, asym_swing 1.035.
+- **Output fingerprints, recorded before unblinding:**
+  - `external_scores.csv` `c698cde0…`
+  - `external_scores_tall.csv` `bf86d39d…`
+  - `frozen_manifest.json` `c02c40eb…`
+- **Blind observation (no labels):** WearGait-PD scores sit high. M1-fb mean 0.79, median 0.81, range 0.31–1.00, against 56% PD in training. This matches the higher stride-time CV in short walks (WearGait-PD mean CV 4.36). Expect poor calibration-in-the-large; discrimination (H1) is a separate question.
+- **Next:** unblind and run `c_02`.
+
+#### In plain words
+1. The locked model has now given every usable WearGait-PD person a score, still without anyone knowing who has Parkinson's.
+2. We saved the scores' fingerprints first, so they provably can't be changed after we look at the answers.
+3. The scores are high for almost everyone, probably because short walks look more irregular. That affects calibration, not necessarily ranking.
+
+**Why it matters:** the order (freeze → score → fingerprint → unblind) is what makes the external test believable.
 
 ### 2026-11-23 — FREEZE: `model-frozen` tag (before unblinding)
 **Who:** Lead  **Branch/commit:** data/freeze, tag `model-frozen`
