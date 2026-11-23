@@ -43,6 +43,14 @@ This is the shared record of everything changed or decided in this project. **Bo
 
 ## Log entries
 
+### 2026-11-23 — Final presentation: full project journey (Phase 1 + Phase 2)
+**Who:** Lead  **Branch/commit:** data/journey-deck
+- **New (local, not committed):** `Gait-Project-Journey-Presentation.pdf`, 28 slides in 4 chapters: the problem → Phase 1 (MSCAF-Gait re-implementation, 13 gait features, leakage, leave-one-study-out, explainability, demo) → Phase 2 (WearGait-PD, blinding and freeze, pre-test checks, frozen result, robustness, case-mix/site, claims) → lessons and future work.
+- New visual design, different from both earlier decks: built as HTML and printed to PDF with headless Chrome, with every slide checked from a screenshot. The two signal figures were redrawn from gaitpdb (GaCo01_01, GaPt03_01). All other charts are drawn from logged numbers (`results_new/*.json`, `research/writeup/RESULTS.md`).
+- No new analysis; every number comes from a logged run.
+- **In plain words:** One deck now tells the whole story, from the 99.6% claim to the 0.47 result in a new hospital.
+- Open: the demo slide shows a placeholder, because the app's model loading did not finish within 40 s in headless capture. Add a screenshot if wanted.
+
 ### 2026-11-23 — Slides: Janak roll number added
 **Who:** Lead  **Branch/commit:** data/slides-rollnumber
 - **Changed:** `Gait-Transport-Results-Deck.pptx` (slide 1 title line).
