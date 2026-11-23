@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored 2026-11-23 (113, `c_frozen`). Next: unblind → H1–H3 |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. Next: D (exploratory) + write-up |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,37 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — UNBLINDED: confirmatory results H1–H3 (frozen M1-fb), primary external result
+**Who:** Lead  **Branch/commit:** run `c_frozen`; code = tag `model-frozen` (no changes under `experiments/` since the tag)
+- Ran `c_02_hypothesis_testing` exactly as in `FREEZE_RECORD.md`. This is the first read of `labels/` for analysis. `results.json` SHA `800e5bc8…`; also `roc_curves.png`, `calibration_curves.png`.
+- **Cohort:** 113 scored (67 PD, 46 controls). **B-D1 split of the 10 not scored (no insoles): 5 PD, 5 controls**, so the exclusion is balanced.
+- **Primary, M1-fb (Holm, one-sided, α = 0.05):**
+
+  | Hypothesis | Estimate [95% CI] | p | Holm threshold | Decision |
+  |---|---|---|---|---|
+  | H1 external AUC > 0.5 | **AUC 0.470** [0.357, 0.582] (DeLong) | 0.703 | 0.050 | not rejected |
+  | H2 speed-adjusted AAUC > 0.5 | AAUC 0.553 [0.444, 0.665] | 0.171 | 0.025 | not rejected (and not interpretable, as H1 is not rejected) |
+  | H3 gap (internal emulated − external) > 0 | **gap 0.204** [0.034, 0.342] (0.673 − 0.470) | 0.0065 | 0.0167 | **rejected** |
+
+  - The H2 speed-overlap precondition held: PD 0.39–1.72 m/s, controls 0.48–1.46 m/s; 64 PD and 46 controls inside the overlap.
+  - The bootstrap check for H1 agrees (p 0.703, CI [0.362, 0.577]).
+- **Secondary, M1 (unadjusted, outside Holm):** AUC **0.385** [0.281, 0.490], H1 p 0.985. AAUC 0.501 [0.374, 0.629]. Gap 0.408 [0.250, 0.521], p < 0.001. The ranking is **reversed** (PD scored lower).
+- **Recalibration (secondary, separate):** M1-fb calibration intercept −1.20, slope 0.006, Brier 0.310 frozen vs 0.241 after in-sample recalibration. M1: intercept −2.21, slope −0.08, Brier 0.375 → 0.241. Recalibration cannot rescue a model with no ranking ability.
+- **Independent check:** recomputed directly from the key with `roc_auc_score`, giving M1-fb 0.470 and M1 0.385. Key prefixes map HC → 0 (51) and NLS → 1 (72), as intended.
+- **First descriptive observations (exploratory, Day 3, not confirmatory):**
+  - In WearGait-PD the PD group **walks slightly faster** than the controls (median 1.01 vs 0.95 m/s; speed AUC 0.60).
+  - The gaitpdb PD markers do not separate the groups, or point the other way: stride CV AUC 0.47, swing CV 0.40, stance % 0.28; in gaitpdb these were 0.68, 0.77 and 0.72.
+  - Stance and swing are the features that failed the R6 insole–walkway check.
+- **Conclusion (fixed wording, R1):** the frozen gaitpdb model **does not transport** to WearGait-PD (no discrimination above chance). There is a significant **residual cross-dataset gap after matching walk structure** (0.20 AUC). The gap is not attributed to any single cause.
+- **Next (Day 3):** exploratory analysis (case-mix: medication, H&Y and speed, description only; marker-level shifts; device agreement), figures, write-up, slides.
+
+#### In plain words
+1. The model that worked on gaitpdb (AUC 0.67) does no better than a coin flip on the new WearGait-PD people (AUC 0.47).
+2. The drop is much bigger than shorter walks alone would explain: a clear, statistically significant gap of 0.20.
+3. In WearGait-PD the Parkinson's group walks about as fast as, or faster than, the controls, and the "Parkinson's signs" from gaitpdb don't show up there.
+
+**Why it matters:** this is the honest answer to our research question. A model that looks good inside one dataset can fail on another, and our pre-registered design shows it clearly instead of hiding it.
 
 ### 2026-11-23 — Frozen scoring of WearGait-PD (c_01, label-free, after the tag)
 **Who:** Lead  **Branch/commit:** run `c_frozen` on tag `model-frozen` (3cfa8ac)
