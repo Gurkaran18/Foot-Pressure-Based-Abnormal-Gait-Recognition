@@ -29,8 +29,8 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Research question | How well do gaitpdb-trained foot-pressure models transfer to WearGait-PD, and what explains any drop in performance? |
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
-| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — pre-freeze fixes done (PR pending Teammate review), then freeze** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 done 2026-11-23 (awaiting Teammate review). Next: C = freeze → score → unblind → H1–H3 |
+| Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Next: score → unblind → H1–H3 |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,25 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — FREEZE: `model-frozen` tag (before unblinding)
+**Who:** Lead  **Branch/commit:** data/freeze, tag `model-frozen`
+- **New:** `research/protocol/FREEZE_RECORD.md`. It lists what is frozen (M1-fb primary, M1 secondary, full-walk training on 165 gaitpdb `_01` walks, the c_01 fit, the c_02 H1–H3 methods with Holm, H3 reference 0.6731) and the SHA-256 of every input:
+  - external table `ac1fe306…`
+  - gaitpdb training table `f382c26c…`
+  - emulation summary `7d21eb9e…`
+  - H3 internal draws `01159da4…`
+  - config `cf188d35…`
+- **Checks before tagging:** PR #13 merged (fixes 1–5). 117 tests pass. All fingerprints recomputed on the Lead machine and matching. Nobody has read `labels/`, except the approved blinding scripts b_01/b_04, which never output a group.
+- PR #13 was merged by the Lead before Janak's review (Day 3 time limit). His review is still requested; any problem he finds is handled as a logged deviation.
+- **Next:** run `c_01` (scoring, label-free), then unblind and run `c_02`. Commands are in the freeze record.
+
+#### In plain words
+1. We've locked the model, the data it learns from, and the exact tests, with fingerprints for every file.
+2. This happened before anyone saw which WearGait-PD people have Parkinson's.
+3. From now on, any change is reported as a change and can't replace the locked result.
+
+**Why it matters:** this is the proof that our external result is an honest test, not something tuned after seeing the answers.
 
 ### 2026-11-23 — Pre-freeze fixes 1–5 to the scoring and hypothesis-test code (Lead, approved by Lead)
 **Who:** Lead  **Branch/commit:** data/prefreeze-fixes
