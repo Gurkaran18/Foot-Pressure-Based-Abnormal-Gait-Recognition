@@ -43,6 +43,16 @@ This is the shared record of everything changed or decided in this project. **Bo
 
 ## Log entries
 
+### 2026-11-23 — Slides: title-slide team line corrected
+**Who:** Lead  **Branch/commit:** data/slides-team
+- On the Lead's instruction, the local deck `Gait-Transport-Results-Deck.pptx` was rebuilt with the team line "Gurkaranbir Singh (23103059) · Janak Varshney". Ojasvi and Alanka Vasanth Kumar were removed. Guide and institute are unchanged. The deck validates.
+- Resolves the "confirm names" open item of the slides entry. Janak's roll number can be added if wanted. No code change; the names are passed at build time and not committed.
+
+#### In plain words
+1. The first slide now shows the right team: Gurkaranbir and Janak.
+
+**Why it matters:** the deck must credit the people who actually did this project.
+
 ### 2026-11-23 — Slides: 14-slide results deck (Teammate Day 3 item, done by Lead)
 **Who:** Lead (Janak unavailable)  **Branch/commit:** data/slides
 - **New:**
