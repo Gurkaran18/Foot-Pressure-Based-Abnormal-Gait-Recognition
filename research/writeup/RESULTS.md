@@ -17,7 +17,9 @@ result holds in every sensitivity analysis: other trials, walkway instead of ins
 rules, and patient subgroups. The clearest descriptive difference between the datasets is case-mix. WearGait-PD's
 controls are 11.5 years older than its PD participants (median 78.5 vs 67), slower, and mostly female. In gaitpdb
 the controls are slightly younger than the PD group. Age-matched estimates move towards 0.57 but stay
-uncertain.
+uncertain. In the WearGait-PD release used here, diagnosis is also completely entangled with recruitment
+site: all PD participants come from one Johns Hopkins site and all controls from another [1, 19]. Age,
+site and diagnosis therefore cannot be separated.
 
 ---
 
@@ -45,6 +47,7 @@ uncertain.
 | WearGait-PD (external, scored) | Controls | 46 | **78.5 (73–83)** | **70** | **0.95 (0.76–1.07)** | – | 3.88 |
 | | PD | 67 | 67.0 (62–72) | 37 | 1.01 (0.87–1.18) | 2.0 | 3.69 |
 
+- **Site:** the WearGait-PD subject-ID prefixes identify the recruitment site [1]. Our release contains only NLS (Johns Hopkins Outpatient Center: all 72 PD) and HC (Johns Hopkins Bayview: all 51 controls). The third site (VA Puget Sound, WPD/WHC) is not in this release. **Group and site coincide completely.**
 - Of the 123 WearGait-PD participants, 10 had no insole data and were not scored (B-D1). They were **5 PD and 5 controls**, so the exclusion was balanced.
 - All 113 trials with insoles passed QC (≥ 10 valid strides per foot; median 17).
 - Speed is gaitpdb `Speed_01` (per-study methods) and WearGait-PD walkway footprint speed. They are comparable *within* a dataset only (A1.1 R2).
@@ -143,6 +146,8 @@ All of these use the frozen model, refitted with the frozen code and checked aga
     - In gaitpdb, PD participants are slightly older and slower than controls (speed alone gives AUC 0.77 internally), and the model's markers partly track that.
     - In WearGait-PD the relationship is reversed: the controls are much older (median 78.5 vs 67), slower and more variable, and the PD participants are mostly mild (H&Y median 2), on medication and walking normally.
     - Stride variability therefore points the "wrong way", and a model built on it fails. This is consistent with, but does not prove, a case-mix explanation: the age-matched subset is small (n = 52).
+    - **Site makes the case-mix explanation unavoidable but unresolvable.** In our external set every PD participant was recruited at the Johns Hopkins Outpatient Center and every control at Johns Hopkins Bayview. The older, slower, mostly female control group is a *site* population. Sifat et al. [19] show that site alone predicts diagnosis in WearGait-PD with AUC 0.955.
+    - A disease marker that works should still separate the groups despite site differences. The stride-time features did not, even when the model was trained inside WearGait-PD (0.449). But we cannot rule out that site differences (staff, instructions, insole timing delays) cancel a real disease effect.
 - **Practical meaning:**
   - Simple stride-timing markers learned from one plantar-pressure cohort do not identify mild, treated Parkinson's disease in an independent cohort with a different age structure.
   - An internal AUC of 0.67–0.82 does not guarantee external performance.
@@ -151,7 +156,7 @@ All of these use the frozen model, refitted with the frozen code and checked aga
 ## 8. Limitations
 
 1. **Sample size.** n = 113 externally. The 95% CI for AUC is about ±0.11, and the subgroup and age-matched analyses are small.
-2. **Age confounding is descriptive.** The age-matched and age-adjusted analyses were added after unblinding and their CIs include 0.5. Age, sex and speed are entangled in WearGait-PD's control group.
+2. **Age and site confounding are descriptive.** The age-matched and age-adjusted analyses were added after unblinding and their CIs include 0.5. Age, sex and speed are entangled in WearGait-PD's control group. More fundamentally, diagnosis and recruitment site coincide completely in the release used [1, 19], so no within-site estimate is possible. A release that includes the VA Puget Sound site, which recruited both PD participants and controls, would allow a within-site test.
 3. **The device check limited the primary model to two features.** The richer T1-core model (internal 0.824) relies on toe-off events that failed agreement. It did worse externally (0.385, reversed).
 4. **Speed measures differ between datasets** (stopwatch versus walkway), so speed was used only within a dataset (H2), never across.
 5. **The emulation reproduces walk structure, not context.** It does not reproduce gait initiation, walking on a mat, wearing 13 IMUs, footwear or instructions.
@@ -162,4 +167,5 @@ All of these use the frozen model, refitted with the frozen code and checked aga
 
 - Code: tag `model-frozen` (commit `3cfa8ac`). The analysis scripts after the tag are `d_01_sensitivity.py` and `d_02_writeup_figures.py`.
 - Input fingerprints are in `research/protocol/FREEZE_RECORD.md`. Score fingerprints were logged before unblinding (`external_scores.csv` `c698cde0…`); the confirmatory results are in `results.json` `800e5bc8…`.
+- Reference numbers [1] and [19] refer to the list in `INTRODUCTION_RELATED_WORK.md`.
 - Data are not redistributed: gaitpdb from PhysioNet; WearGait-PD from Synapse under its data use terms. All figures and tables here are group-level summaries.
