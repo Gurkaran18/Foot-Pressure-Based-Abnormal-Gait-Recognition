@@ -1,0 +1,5 @@
+cohort,group,n,age_y median (IQR),female %,speed m/s median (IQR),H&Y median (PD),stride_time_cv median
+"gaitpdb (training, n = 165)",Controls,72,64.0 (57–68),44,1.25 (1.13–1.35),–,2.29
+"gaitpdb (training, n = 165)",PD,93,68.0 (60–72),38,1.08 (0.91–1.18),2.0,2.57
+"WearGait-PD (external, scored n = 113)",Controls,46,78.5 (73–83),70,0.95 (0.76–1.07),–,3.88
+"WearGait-PD (external, scored n = 113)",PD,67,67.0 (62–72),37,1.01 (0.87–1.18),2.0,3.69

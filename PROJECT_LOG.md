@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Next: write-up |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results draft written (`research/writeup/RESULTS.md`). Next: Teammate review, related work, slides |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,30 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-23 — Write-up: results and discussion draft, cohort table, report figures
+**Who:** Lead  **Branch/commit:** data/writeup-results
+- **New:**
+  - `research/writeup/RESULTS.md`: results and discussion draft. Sections: methods in brief, cohorts, internal performance, R6, confirmatory H1–H3, sensitivity, interpretation (fixed R1 wording), limitations, reproducibility. Each number is labelled confirmatory or exploratory.
+  - `scripts/d_02_writeup_figures.py` (run `d_writeup`). It builds the cohort table and 3 figures, and these are copied to `research/writeup/figures/` (group-level summaries only; no individual rows):
+    - `fig1_auc_forest.png`: internal, emulated and external AUC plus the sensitivity rows.
+    - `fig2_age_by_group.png`: age distributions by group in both datasets.
+    - `fig3_external_roc.png`: frozen M1-fb and M1 on WearGait-PD. Uses the unrounded linear predictor, so the AUC equals the confirmatory 0.470 / 0.385; rounded probabilities create ties.
+  - Colours are the validated categorical pair (blue = controls / M1-fb, orange = PD / M1).
+- **Cohort table (new numbers):**
+  - gaitpdb controls: 64.0 years, 44% female, 1.25 m/s. gaitpdb PD: 68.0, 38%, 1.08.
+  - WearGait-PD controls: **78.5, 70% female, 0.95 m/s**. WearGait-PD PD: 67.0, 37%, 1.01.
+  - H&Y median 2.0 in both PD groups.
+  - (The D1 entry's "12 years" is 78.5 − 67 = 11.5, rounded; the write-up uses 11.5.)
+- Internal gaitpdb numbers (M1 0.824, M1-fb 0.665, CIs, AAUC) are taken from the Teammate's a2_06 run as logged on 2026-11-22. They are not rerun here (that output is on the Teammate's machine).
+- **Next:** Janak reviews the draft and adds related work, figure polish and slides (his Day 3 items); viva rehearsal.
+
+#### In plain words
+1. We wrote the results chapter: what we did, what we found, and how sure we are.
+2. Three figures show it at a glance: the model works inside gaitpdb but not on WearGait-PD; WearGait-PD's healthy people are much older; the ROC curves sit on the chance line.
+3. Every number is copied from a real run, and the chapter keeps the locked (confirmatory) results apart from the extra (exploratory) checks.
+
+**Why it matters:** this is what examiners will read. It tells the honest story, a clear negative result with a careful explanation, in a way they can check.
 
 ### 2026-11-23 — D1: post-unblinding sensitivity analyses (EXPLORATORY): the null result is robust
 **Who:** Lead  **Branch/commit:** data/d1-sensitivity
