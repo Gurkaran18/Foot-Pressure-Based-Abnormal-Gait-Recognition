@@ -30,7 +30,7 @@ This is the shared record of everything changed or decided in this project. **Bo
 | Phase A1 / A1.1 (planning) | Done. See `research/protocol/` |
 | Decision register D2–D17 | Approved 2026-11-19 (D10 modified) |
 | Phase A2 (gaitpdb pipeline, `experiments/external_transport/`) | Lead + teammate Day 1 and Day 2 merged (113 pass, 7 skipped). Internal M1 AUC 0.824, M1-fb 0.665; both internal AAUC gates pass. E9: D15 = full-walk training; H3 reference (M1-fb emulated) 0.673. WearGait-PD: blinded; loader + features done (113/113 insole trials pass QC); emulation re-tuned to 4×4–5. R6 done → **primary external model = M1-fb** (B-D8); M1 secondary. B4 covariates + B5 external scoring table done; **Lead Phase B complete — **frozen 2026-11-23 (tag `model-frozen`)** |
-| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results, introduction and related work drafted (`research/writeup/`); diagnosis = site in the external set (noted). Slides built (local deck); viva notes written. Next: rehearsal, visual check of the deck |
+| Phase B / C / D (WearGait-PD audit, frozen external test, exploratory analysis) | B (Lead side) complete 2026-11-22: B1–B5. Teammate pre-freeze items merged (PR #11, 2026-11-23). Pre-freeze fixes 1–5 merged (PR #13). **Frozen 2026-11-23** (`research/protocol/FREEZE_RECORD.md`). Scored and **unblinded 2026-11-23**: M1-fb external AUC 0.470 (H1 not rejected), H2 not rejected, **H3 rejected (gap 0.20)**. D1 sensitivity: null robust in all variations; age case-mix reversed (exploratory). Results, introduction and related work drafted (`research/writeup/`); diagnosis = site in the external set (noted). Slides built (local deck); viva notes written. Demo app fixed and extended with a Phase 2 tab (2026-11-26). Next: rehearsal, visual check of the deck |
 | Team setup (Part 1) | Done: docs pushed, teammate joined (write access), `main` protected; Lead merges directly, teammate PRs need Lead approval |
 | Plan | 3-day sprint: Day 1 = A2, Day 2 = B + C, Day 3 = D + write-up |
 
@@ -42,6 +42,13 @@ This is the shared record of everything changed or decided in this project. **Bo
 ---
 
 ## Log entries
+
+### 2026-11-26 — Demo app: start-up crash fixed, Phase 2 tab added
+**Who:** Lead  **Branch/commit:** data/demo-app-phase2
+- `app.py` (protected script, edited on explicit request): sets `OMP_NUM_THREADS=1` and imports torch first. On macOS the scikit-learn/XGBoost and PyTorch OpenMP runtimes clashed and loading the MSCAF checkpoints segfaulted (exit 139), so the app hung at start-up. This was the cause of the "model loading did not finish" note on 2026-11-23.
+- New tab "Phase 2: external test (WearGait-PD)": the frozen M1-fb description, the H1–H3 table read from `outputs/c_frozen/hypothesis_testing/results.json`, the external ROC figure, and a calculator (stride-time mean + CV → P(PD)). The calculator refits M1-fb from the training table and is only used if it matches the frozen manifest coefficients (checked: intercept 0.3402, coefficients −0.0291 / 0.8886, exact match). Aggregate results only; no per-person WearGait-PD data is shown. The tab shows a notice if the local-only outputs are missing.
+- Checked with Streamlit AppTest (DATA_ROOT = local gaitpdb): no exceptions; start-up about 3 s; GaPt03 (PD) out-of-fold scores: features 79%, MSCAF 98%, fused 89%; JuCo01 (control): 17% / 75% / 46%; Phase 2 table shows AUC 0.470, AAUC 0.553, gap 0.204, as logged.
+- Run: `DATA_ROOT=<gaitpdb folder> streamlit run app.py`.
 
 ### 2026-11-23 — Final presentation: full project journey (Phase 1 + Phase 2)
 **Who:** Lead  **Branch/commit:** data/journey-deck
